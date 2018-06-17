@@ -109,13 +109,22 @@ class Rig:
             mch_chain += [mch_bone]
             mch_drv_chain += [mch_bone_drv]
 
+        # Creating tip control bone
+        tip_name = copy_bone(self.obj, org_bones[-1], temp_name)
+        ctrl_bone_tip = eb[tip_name]
+        flip_bone(self.obj, tip_name)
+        ctrl_bone_tip.length /= 2
+
+        ctrl_bone_tip.parent = eb[ctrl_chain[-1]]
+
         # Restoring org chain parenting
         for bone in org_bones[1:]:
             eb[bone].parent = eb[org_bones[org_bones.index(bone) - 1]]
+            eb[bone].use_connect = True
 
-        # Parenting the master bone to the first org
+        # Parenting the master bone parallel to the first org
         ctrl_bone_master = eb[master_name]
-        ctrl_bone_master.parent = eb[org_bones[0]]
+        ctrl_bone_master.parent = eb[org_bones[0]].parent
 
         # Parenting chain bones
         for i in range(len(self.org_bones)):
@@ -153,14 +162,6 @@ class Rig:
                 mch_bone_e.parent = ctrl_bone_e
                 mch_bone_e.use_connect = False
 
-        # Creating tip control bone
-        tip_name = copy_bone(self.obj, org_bones[-1], temp_name)
-        ctrl_bone_tip = eb[tip_name]
-        flip_bone(self.obj, tip_name)
-        ctrl_bone_tip.length /= 2
-
-        ctrl_bone_tip.parent = eb[ctrl_chain[-1]]
-
         bpy.ops.object.mode_set(mode='OBJECT')
 
         pb = self.obj.pose.bones
@@ -183,11 +184,15 @@ class Rig:
 
         # Pose settings
         for org, ctrl, deform, mch, mch_drv in zip(self.org_bones, ctrl_chain, def_chain, mch_chain, mch_drv_chain):
+            # Constraining the org bones
+            con = pb[org].constraints.new('COPY_TRANSFORMS')
+            con.target = self.obj
+            con.subtarget = mch
 
             # Constraining the deform bones
             con = pb[deform].constraints.new('COPY_TRANSFORMS')
             con.target = self.obj
-            con.subtarget = mch
+            con.subtarget = org
 
             # Constraining the mch bones
             if mch_chain.index(mch) == 0:
