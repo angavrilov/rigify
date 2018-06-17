@@ -520,6 +520,112 @@ def ik2fk_leg(obj, fk, ik):
         match_pole_target(thighi, shini, pole, thigh, (thighi.length + shini.length))
 
 
+def normalize_finger(obj, fk_master, fk_master_drv, fk_controls, axis):
+    """ Absorbs rotation from tweaks to master control bone.
+        obj: armature object
+        fk_master: master FK control
+        fk_master_drv: proxy bones of the master
+        fk_controls: list of tweak FK controls
+        axis: main transform axis
+    """
+
+    fk_master_drv = parse_bone_names(fk_master_drv)
+    fk_controls = parse_bone_names(fk_controls)
+
+    axis_types = {
+        "automatic": [0, 1, 'XYZ'],
+        "X": [0, 1, 'XYZ'],
+        "-X": [0, -1, 'XYZ'],
+        "Y": [1, 1, 'YXZ'],
+        "-Y": [1, -1, 'YXZ'],
+        "Z": [2, 1, 'ZXY'],
+        "-Z": [2, -1, 'ZXY'],
+    }
+
+    axis_id, axis_sign, axis_order = axis_types[axis]
+
+    # Scan controls to collect data
+    ctl_matrix_list = [obj.pose.bones[name].matrix.copy() for name in fk_controls]
+
+    rotations = []
+
+    for i, (drv_name, ctl_name, ctl_mat) in enumerate(zip(fk_master_drv, fk_controls, ctl_matrix_list)):
+        drv = obj.pose.bones[drv_name]
+        ctl = obj.pose.bones[ctl_name]
+
+        drv_mat = get_pose_matrix_in_other_space(ctl_mat, drv)
+
+        if i == 0:
+            # Absorb first tweak control rotation into the master control
+            master = obj.pose.bones[fk_master]
+
+            master_mat = get_pose_matrix_in_other_space(ctl_mat, master)
+
+            set_pose_translation(master, master_mat)
+            set_pose_rotation(master, drv_mat)
+            set_pose_translation(ctl, Matrix())
+            set_pose_rotation(ctl, Matrix())
+
+            bpy.ops.object.mode_set(mode='OBJECT')
+            bpy.ops.object.mode_set(mode='POSE')
+        else:
+            # Collect single axis rotations
+            rotations.append(drv_mat.to_quaternion().to_euler(axis_order)[axis_id])
+
+    # Apply average rotation to the master control scale
+    avg_rotation = sum(rotations) / len(rotations)
+    obj.pose.bones[fk_master].scale.y = 1 - axis_sign * avg_rotation / pi;
+
+    # Correct tweak control rotations
+    for i, (ctl_name, ctl_mat) in enumerate(zip(fk_controls, ctl_matrix_list)):
+        if i > 0:
+            ctl = obj.pose.bones[ctl_name]
+            mat = get_pose_matrix_in_other_space(ctl_mat, ctl)
+            set_pose_translation(ctl, mat)
+            set_pose_rotation(ctl, mat)
+
+        bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.ops.object.mode_set(mode='POSE')
+
+
+def fk2ik_finger(obj, fk_controls, fk_chain, ik_chain):
+    """ Matches the fk bones in a finger rig to the ik bones.
+        obj: armature object
+        fk_controls: list of tweak FK controls
+        fk_chain: list of bones with final FK shape
+        ik_chain: list of bones with final IK shape
+    """
+
+    fk_controls = parse_bone_names(fk_controls)
+    fk_chain = parse_bone_names(fk_chain)
+    ik_chain = parse_bone_names(ik_chain)
+
+    ik_matrix_list = [obj.pose.bones[name].matrix.copy() for name in ik_chain]
+
+    for i, (ctl_name, fk_name, ik_matrix) in enumerate(zip(fk_controls, fk_chain, ik_matrix_list)):
+        fk = obj.pose.bones[fk_name]
+        ctl = obj.pose.bones[ctl_name]
+
+        newmat = ik_matrix * fk.matrix.inverted() * ctl.matrix
+        newmat_local = get_pose_matrix_in_other_space(newmat, ctl)
+        set_pose_rotation(ctl, newmat_local)
+
+        bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.ops.object.mode_set(mode='POSE')
+
+
+def ik2fk_finger(obj, fk, ik):
+    """ Matches the ik bone in a finger rig to the fk bones.
+        obj: armature object
+        fk: FK fingertip control
+        ik: IK control
+    """
+    fk_bone = obj.pose.bones[fk]
+    ik_bone = obj.pose.bones[ik]
+
+    match_pose_translation(ik_bone, fk_bone)
+
+
 ################################
 ## IK Rotation-Pole functions ##
 ################################
@@ -718,6 +824,59 @@ class Rigify_Leg_IK2FK(bpy.types.Operator):
             context.user_preferences.edit.use_global_undo = use_global_undo
         return {'FINISHED'}
 
+
+class Rigify_Finger_FK2IK(bpy.types.Operator):
+    """Snaps an FK finger to the actual shape, and normalizes the master control"""
+    bl_idname = "pose.rigify_finger_fk2ik_" + rig_id
+    bl_label = "Rigify Snap FK finger to IK"
+    bl_options = {'UNDO'}
+
+    fk_master     = bpy.props.StringProperty(name="FK Master Name")
+    fk_master_drv = bpy.props.StringProperty(name="FK Master Proxy Name")
+    fk_controls   = bpy.props.StringProperty(name="FK Control Names")
+    fk_chain      = bpy.props.StringProperty(name="FK Shape Bone Names")
+    ik_chain      = bpy.props.StringProperty(name="IK Shape Bone Names")
+    axis          = bpy.props.StringProperty(name="Main Rotation Axis")
+
+    @classmethod
+    def poll(cls, context):
+        return (context.active_object != None and context.mode == 'POSE')
+
+    def execute(self, context):
+        use_global_undo = context.user_preferences.edit.use_global_undo
+        context.user_preferences.edit.use_global_undo = False
+        try:
+            if self.ik_chain != '':
+                fk2ik_finger(context.active_object, self.fk_controls, self.fk_chain, self.ik_chain)
+            if self.fk_master != '':
+                normalize_finger(context.active_object, self.fk_master, self.fk_master_drv, self.fk_controls, self.axis)
+        finally:
+            context.user_preferences.edit.use_global_undo = use_global_undo
+        return {'FINISHED'}
+
+
+class Rigify_Finger_IK2FK(bpy.types.Operator):
+    """Snaps the IK finger control to the FK finger"""
+    bl_idname = "pose.rigify_finger_ik2fk_" + rig_id
+    bl_label = "Rigify Snap IK finger to FK"
+    bl_options = {'UNDO'}
+
+    fk_ctl = bpy.props.StringProperty(name="FK Name")
+    ik_ctl = bpy.props.StringProperty(name="IK Name")
+
+    @classmethod
+    def poll(cls, context):
+        return (context.active_object != None and context.mode == 'POSE')
+
+    def execute(self, context):
+        use_global_undo = context.user_preferences.edit.use_global_undo
+        context.user_preferences.edit.use_global_undo = False
+        try:
+            ik2fk_finger(context.active_object, self.fk_ctl, self.ik_ctl)
+        finally:
+            context.user_preferences.edit.use_global_undo = use_global_undo
+        return {'FINISHED'}
+
 ###########################
 ## IK Rotation Pole Snap ##
 ###########################
@@ -846,6 +1005,8 @@ def register():
     bpy.utils.register_class(Rigify_Arm_IK2FK)
     bpy.utils.register_class(Rigify_Leg_FK2IK)
     bpy.utils.register_class(Rigify_Leg_IK2FK)
+    bpy.utils.register_class(Rigify_Finger_FK2IK)
+    bpy.utils.register_class(Rigify_Finger_IK2FK)
     bpy.utils.register_class(Rigify_Rot2PoleSwitch)
     bpy.utils.register_class(RigUI)
     bpy.utils.register_class(RigLayers)
@@ -855,7 +1016,9 @@ def unregister():
     bpy.utils.unregister_class(Rigify_Arm_IK2FK)
     bpy.utils.unregister_class(Rigify_Leg_FK2IK)
     bpy.utils.unregister_class(Rigify_Leg_IK2FK)
-    bpy.utils.register_class(Rigify_Rot2PoleSwitch)
+    bpy.utils.unregister_class(Rigify_Finger_FK2IK)
+    bpy.utils.unregister_class(Rigify_Finger_IK2FK)
+    bpy.utils.unregister_class(Rigify_Rot2PoleSwitch)
     bpy.utils.unregister_class(RigUI)
     bpy.utils.unregister_class(RigLayers)
 
