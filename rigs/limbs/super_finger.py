@@ -1,4 +1,5 @@
 import bpy
+import re
 from ...utils import copy_bone, flip_bone
 from ...utils import strip_org, make_deformer_name, connected_children_names, make_mechanism_name
 from ...utils import create_circle_widget, create_widget, create_sphere_widget
@@ -110,12 +111,12 @@ class Rig:
         org_name = self.org_bones[0]
         temp_name = strip_org(self.org_bones[0])
 
-        if temp_name[-2:] == '.L' or temp_name[-2:] == '.R':
-            suffix = temp_name[-2:]
-            master_name = temp_name[:-2] + "_master" + suffix
-        else:
-            master_name = temp_name + "_master"
-        master_name = copy_bone(self.obj, org_name, master_name)
+        # Compute master bone name: inherit .LR suffix, but strip trailing digits
+        name_parts = re.match(r'^(.*?)(?:([._-])?\d+)?((?:[._-][LlRr])?)(?:\.\d+)?$', temp_name)
+        name_base, name_sep, name_suffix = name_parts.groups()
+        name_base += name_sep if name_sep else '_'
+
+        master_name = copy_bone(self.obj, org_name, name_base + 'master' + name_suffix)
         ctrl_bone_master = eb[master_name]
 
         # Parenting bug fix ??
@@ -158,7 +159,7 @@ class Rig:
             mch_drv_chain += [mch_bone_drv]
 
         # Creating tip control bone
-        tip_name = copy_bone(self.obj, org_bones[-1], temp_name)
+        tip_name = copy_bone(self.obj, org_bones[-1], name_base + 'tip' + name_suffix)
         ctrl_bone_tip = eb[tip_name]
         flip_bone(self.obj, tip_name)
         ctrl_bone_tip.length /= 2
@@ -167,7 +168,7 @@ class Rig:
 
         # Create IK control bone and follow socket
         if self.params.generate_ik:
-            ik_ctrl_name = copy_bone(self.obj, tip_name, get_bone_name(org_name, 'ctrl', 'ik'))
+            ik_ctrl_name = copy_bone(self.obj, tip_name, name_base + 'ik' + name_suffix)
             ik_ctrl_bone = eb[ik_ctrl_name]
             ik_ctrl_bone.tail = ik_ctrl_bone.head + Vector((0, ik_ctrl_bone.length * 1.5, 0))
             ik_ctrl_bone.roll = 0
