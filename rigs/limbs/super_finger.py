@@ -148,7 +148,7 @@ class Rig:
                 def_bone_e.parent = eb[self.org_bones[i]].parent
                 def_bone_e.use_connect = False
                 # First mch bone
-                mch_bone_e.parent = eb[self.org_bones[i]].parent
+                mch_bone_e.parent = ctrl_bone_e
                 mch_bone_e.use_connect = False
                 # First mch driver bone
                 mch_bone_drv_e.parent = eb[self.org_bones[i]].parent
@@ -196,30 +196,30 @@ class Rig:
             con.subtarget = mch
 
             # Constraining the deform bones
-            con = pb[deform].constraints.new('COPY_TRANSFORMS')
-            con.target = self.obj
-            con.subtarget = org
+            if deform == def_chain[0]:
+                con = pb[deform].constraints.new('COPY_LOCATION')
+                con.target = self.obj
+                con.subtarget = org
+
+                con = pb[deform].constraints.new('COPY_SCALE')
+                con.target = self.obj
+                con.subtarget = org
+
+                con = pb[deform].constraints.new('DAMPED_TRACK')
+                con.target = self.obj
+                con.subtarget = org_bones[1]
+
+                con = pb[deform].constraints.new('STRETCH_TO')
+                con.target = self.obj
+                con.subtarget = org_bones[1]
+                con.volume = 'NO_VOLUME'
+            else:
+                con = pb[deform].constraints.new('COPY_TRANSFORMS')
+                con.target = self.obj
+                con.subtarget = org
 
             # Constraining the mch bones
-            if mch_chain.index(mch) == 0:
-                con = pb[mch].constraints.new('COPY_LOCATION')
-                con.target = self.obj
-                con.subtarget = ctrl
-
-                con = pb[mch].constraints.new('COPY_SCALE')
-                con.target = self.obj
-                con.subtarget = ctrl
-
-                con = pb[mch].constraints.new('DAMPED_TRACK')
-                con.target = self.obj
-                con.subtarget = ctrl_chain[ctrl_chain.index(ctrl)+1]
-
-                con = pb[mch].constraints.new('STRETCH_TO')
-                con.target = self.obj
-                con.subtarget = ctrl_chain[ctrl_chain.index(ctrl)+1]
-                con.volume = 'NO_VOLUME'
-
-            elif mch_chain.index(mch) == len(mch_chain) - 1:
+            if mch_chain.index(mch) == len(mch_chain) - 1:
                 con = pb[mch].constraints.new('DAMPED_TRACK')
                 con.target = self.obj
                 con.subtarget = tip_name
