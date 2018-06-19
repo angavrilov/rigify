@@ -1427,3 +1427,50 @@ def make_track_constraint_from_string(owner, target, subtarget, fstring):
         const.target_space = constraint_space[cns_props[3][0]] if bool(cns_props[3]) else "LOCAL"
         const.owner_space = constraint_space[cns_props[3][1]] if bool(cns_props[3]) else "LOCAL"
         const.head_tail = float(cns_props[4]) if bool(cns_props[4]) else 0.0
+
+
+#=============================================
+# UI utilities
+#=============================================
+
+def layout_layer_selection_ui(layout, params, enable_option, layers_option):
+    r = layout.row()
+    r.prop(params, enable_option)
+    r.active = getattr(params, enable_option)
+
+    col = r.column(align=True)
+    row = col.row(align=True)
+
+    bone_layers = bpy.context.active_pose_bone.bone.layers[:]
+
+    for i in range(8):    # Layers 0-7
+        icon = "NONE"
+        if bone_layers[i]:
+            icon = "LAYER_ACTIVE"
+        row.prop(params, layers_option, index=i, toggle=True, text="", icon=icon)
+
+    row = col.row(align=True)
+
+    for i in range(16, 24):     # Layers 16-23
+        icon = "NONE"
+        if bone_layers[i]:
+            icon = "LAYER_ACTIVE"
+        row.prop(params, layers_option, index=i, toggle=True, text="", icon=icon)
+
+    col = r.column(align=True)
+    row = col.row(align=True)
+
+    for i in range(8, 16):  # Layers 8-15
+        icon = "NONE"
+        if bone_layers[i]:
+            icon = "LAYER_ACTIVE"
+        row.prop(params, layers_option, index=i, toggle=True, text="", icon=icon)
+
+    row = col.row(align=True)
+
+    for i in range(24, 32):     # Layers 24-31
+        icon = "NONE"
+        if bone_layers[i]:
+            icon = "LAYER_ACTIVE"
+        row.prop(params, layers_option, index=i, toggle=True, text="", icon=icon)
+
