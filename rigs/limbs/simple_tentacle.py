@@ -4,6 +4,7 @@ from ...utils import strip_org, make_deformer_name, connected_children_names
 from ...utils import put_bone, create_sphere_widget
 from ...utils import create_circle_widget, align_bone_x_axis
 from ...utils import MetarigError
+from ...utils import layout_layer_selection_ui
 
 
 class Rig:
@@ -277,45 +278,7 @@ def parameters_ui(layout, params):
     for i, axis in enumerate(['x', 'y', 'z']):
         row.prop(params, "copy_rotation_axes", index=i, toggle=True, text=axis)
 
-    r = layout.row()
-    r.prop(params, "tweak_extra_layers")
-    r.active = params.tweak_extra_layers
-
-    col = r.column(align=True)
-    row = col.row(align=True)
-
-    bone_layers = bpy.context.active_pose_bone.bone.layers[:]
-
-    for i in range(8):    # Layers 0-7
-        icon = "NONE"
-        if bone_layers[i]:
-            icon = "LAYER_ACTIVE"
-        row.prop(params, "tweak_layers", index=i, toggle=True, text="", icon=icon)
-
-    row = col.row(align=True)
-
-    for i in range(16, 24):     # Layers 16-23
-        icon = "NONE"
-        if bone_layers[i]:
-            icon = "LAYER_ACTIVE"
-        row.prop(params, "tweak_layers", index=i, toggle=True, text="", icon=icon)
-    
-    col = r.column(align=True)
-    row = col.row(align=True)
-
-    for i in range(8, 16):  # Layers 8-15
-        icon = "NONE"
-        if bone_layers[i]:
-            icon = "LAYER_ACTIVE"
-        row.prop(params, "tweak_layers", index=i, toggle=True, text="", icon=icon)
-
-    row = col.row(align=True)
-
-    for i in range(24, 32):     # Layers 24-31
-        icon = "NONE"
-        if bone_layers[i]:
-            icon = "LAYER_ACTIVE"
-        row.prop(params, "tweak_layers", index=i, toggle=True, text="", icon=icon)
+    layout_layer_selection_ui(layout, params, "tweak_extra_layers", "tweak_layers")
 
 
 def create_sample(obj):

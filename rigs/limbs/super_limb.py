@@ -4,6 +4,7 @@ from .arm import Rig as armRig
 from .leg import Rig as legRig
 from .paw import Rig as pawRig
 
+from ...utils import layout_layer_selection_ui
 
 class Rig:
 
@@ -130,46 +131,8 @@ def parameters_ui(layout, params):
     r = layout.row()
     r.prop(params, "bbones")
 
-    bone_layers = bpy.context.active_pose_bone.bone.layers[:]
-
-    for layer in ['fk', 'tweak']:
-        r = layout.row()
-        r.prop(params, layer + "_extra_layers")
-        r.active = params.tweak_extra_layers
-
-        col = r.column(align=True)
-        row = col.row(align=True)
-
-        for i in range(8):
-            icon = "NONE"
-            if bone_layers[i]:
-                icon = "LAYER_ACTIVE"
-            row.prop(params, layer + "_layers", index=i, toggle=True, text="", icon=icon)
-
-        row = col.row(align=True)
-
-        for i in range(16,24):
-            icon = "NONE"
-            if bone_layers[i]:
-                icon = "LAYER_ACTIVE"
-            row.prop(params, layer + "_layers", index=i, toggle=True, text="", icon=icon)
-
-        col = r.column(align=True)
-        row = col.row(align=True)
-
-        for i in range(8,16):
-            icon = "NONE"
-            if bone_layers[i]:
-                icon = "LAYER_ACTIVE"
-            row.prop(params, layer + "_layers", index=i, toggle=True, text="", icon=icon)
-
-        row = col.row(align=True)
-
-        for i in range(24,32):
-            icon = "NONE"
-            if bone_layers[i]:
-                icon = "LAYER_ACTIVE"
-            row.prop(params, layer + "_layers", index=i, toggle=True, text="", icon=icon)
+    layout_layer_selection_ui(layout, params, "fk_extra_layers", "fk_layers")
+    layout_layer_selection_ui(layout, params, "tweak_extra_layers", "tweak_layers")
 
 
 def create_sample(obj):
