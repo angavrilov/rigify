@@ -1,6 +1,6 @@
 import bpy
 from mathutils import Vector
-from ...utils import copy_bone, flip_bone, put_bone, org, align_bone_y_axis, align_bone_x_axis
+from ...utils import copy_bone, new_bone, flip_bone, put_bone, org, align_bone_y_axis, align_bone_x_axis
 from ...utils import strip_org, make_deformer_name, connected_children_names
 from ...utils import create_circle_widget, create_sphere_widget, create_neck_bend_widget, create_neck_tweak_widget
 from ..widgets import create_ballsocket_widget
@@ -13,10 +13,9 @@ controls = [%s]
 torso    = '%s'
 
 if is_selected( controls ):
-    if hasattr(pose_bones[torso],'["%s"]'):
-        layout.prop( pose_bones[ torso ], '["%s"]', slider = True )
-    if hasattr(pose_bones[torso],'["%s"]'):
-        layout.prop( pose_bones[ torso ], '["%s"]', slider = True )
+"""
+
+script_attr = """
     if hasattr(pose_bones[torso],'["%s"]'):
         layout.prop( pose_bones[ torso ], '["%s"]', slider = True )
 """
@@ -36,28 +35,80 @@ class Rig(ConstraintUtilityMixin):
         self.copy_rotation_axes = params.copy_rotation_axes
         self.use_head = params.use_head
         self.use_tail = params.use_tail
+        self.use_pivot_slide = params.use_pivot_slide
 
-        # Check if user provided the pivot position
-        if params.pivot_pos:
-            self.pivot_pos = params.pivot_pos + 1
+        if self.use_pivot_slide:
+            # Check tail size
+            if self.use_tail and params.tail_pos > 1:
+                self.tail_pos = params.tail_pos
+            else:
+                self.tail_pos = 0
+
+            self.pivot_pos = self.tail_pos + 1
+
+            # Check neck + head size
+            if self.use_head:
+                if params.neck_pos < self.pivot_pos + 3:
+                    raise MetarigError(
+                        "RIGIFY ERROR: bad neck position: spine is too short"
+                    )
+                elif params.neck_pos > len(self.org_bones):
+                    raise MetarigError(
+                        "RIGIFY ERROR: bad neck position: exceeds bone count"
+                    )
+                else:
+                    self.neck_pos = params.neck_pos
+            else:
+                self.neck_pos = len(self.org_bones) + 1
+
+            # Parse control bone indices
+            self.torso_size = self.neck_pos - self.pivot_pos
+            self.control_indices = [0, self.torso_size - 1]
+
+            temp = self.params.spine_control_list.split(",")
+            for i in temp:
+                try:
+                    j = int(i) - self.pivot_pos
+                except ValueError:
+                    pass
+                else:
+                    if (j > 0) and (j < self.torso_size) and (j not in self.control_indices):
+                        self.control_indices += [j]
+
+            self.control_indices.sort()
+
+            # Clamp pivot_rest to within the middle bones of the spine
+            self.pivot_rest = self.params.rest_pivot_slide
+            self.pivot_rest = max(self.pivot_rest, 1.0 / self.torso_size)
+            self.pivot_rest = min(self.pivot_rest, 1.0 - (1.0 / self.torso_size))
+
         else:
-            raise MetarigError(
-                "RIGIFY ERROR: please specify pivot bone position"
-            )
+            # Check if user provided the pivot position
+            if params.pivot_pos:
+                self.pivot_pos = params.pivot_pos + 1
+            else:
+                raise MetarigError(
+                    "RIGIFY ERROR: please specify pivot bone position"
+                )
 
-        # Check if neck is lower than pivot
-        if self.use_head and params.neck_pos <= params.pivot_pos and params.neck_pos != 0:
-            raise MetarigError(
-                "RIGIFY ERROR: Neck cannot be below or the same as pivot. (use 0 for no neck)"
-            )
-        else:
-            self.neck_pos = params.neck_pos
+            # Check if neck is lower than pivot
+            if self.use_head and params.neck_pos <= params.pivot_pos and params.neck_pos != 0:
+                raise MetarigError(
+                    "RIGIFY ERROR: Neck cannot be below or the same as pivot. (use 0 for no neck)"
+                )
+            else:
+                self.neck_pos = params.neck_pos
 
-        if not self.use_head:
-            self.neck_pos = len(self.org_bones)
+            if not self.use_head:
+                self.neck_pos = len(self.org_bones)
 
-        if self.use_tail and self.pivot_pos - 2 > 0:
-            self.tail_pos = params.tail_pos
+            if self.use_tail and params.tail_pos > 1:
+                if params.tail_pos >= params.pivot_pos:
+                    raise MetarigError(
+                        "RIGIFY ERROR: Tail cannot be above or the same as pivot."
+                    )
+
+                self.tail_pos = params.tail_pos
 
         # Assign values to tweak layers props if opted by user
         if params.tweak_extra_layers:
@@ -431,6 +482,191 @@ class Rig(ConstraintUtilityMixin):
             'original_names': tail_bones
         }
 
+    def create_pivot_slide_torso(self, torso_bones):
+        bpy.ops.object.mode_set(mode='EDIT')
+        eb = self.obj.data.edit_bones
+
+        #-------------------------
+        # Get rest slide position
+        i, a = divmod(self.pivot_rest * len(torso_bones), 1)
+        if i >= self.torso_size:
+            i, a = i-1, 1.0
+
+        pivot_e = eb[org(torso_bones[int(i)])]
+        pivot_rest_pos = pivot_e.head.copy() + pivot_e.vector * a
+
+        #----------------------
+        # Create controls and their mechanisms
+
+        controls = []
+        subcontrols = []
+        control_parents = []
+
+        main_control = new_bone(self.obj, 'torso')
+        put_bone(self.obj, main_control, pivot_rest_pos)
+        eb[main_control].length = self.spine_length / 2
+
+        eb[main_control].layers = eb[self.org_bones[0]].layers
+
+        for i in self.control_indices:
+            name = copy_bone(self.obj, org(torso_bones[i]), torso_bones[i])
+            put_bone(self.obj, name, pivot_rest_pos)
+
+            subname = new_bone(self.obj, make_mechanism_name("sub_" + torso_bones[i]))
+            put_bone(self.obj, subname, pivot_rest_pos)
+            eb[subname].length = eb[name].length / 3
+
+            controls.append(name)
+            subcontrols.append(subname)
+
+        for i, name in zip(self.control_indices[1:-1], controls[1:-1]):
+            par_name = new_bone(self.obj, make_mechanism_name("par_" + torso_bones[i]))
+            put_bone(self.obj, par_name, pivot_rest_pos)
+            eb[par_name].length = eb[name].length / 2
+
+            control_parents.append(par_name)
+
+        #-------------------------
+        # Create mch and tweaks
+
+        twk, mch = [], []
+
+        for b in torso_bones:
+            mch_name = copy_bone(self.obj, org(b), make_mechanism_name(b))
+            twk_name = copy_bone(self.obj, org(b), "tweak_" + b)
+            eb[twk_name].length /= 2
+
+            mch.append(mch_name)
+            twk.append(twk_name)
+
+        #-------------------------
+        # Create flex and reverse spine chains
+
+        flex_bones = []
+        flex_subs = []
+        rev_bones = []
+
+        prev_rev = None
+
+        for b in torso_bones:
+            bone = copy_bone(self.obj, org(b), make_mechanism_name(b + ".flex"))
+
+            sub = new_bone(self.obj, make_mechanism_name(b + ".flex_s"))
+            put_bone(self.obj, sub, eb[bone].head)
+            eb[sub].length = eb[bone].length / 4
+
+            rev = copy_bone(self.obj, org(b), make_mechanism_name(b + ".reverse"))
+            flip_bone(self.obj, rev)
+            eb[rev].tail = Vector(eb[bone].head)
+            put_bone(self.obj, rev, eb[prev_rev].tail if prev_rev else pivot_rest_pos)
+
+            flex_bones.append(bone)
+            flex_subs.append(sub)
+            rev_bones.append(rev)
+            prev_rev = rev
+
+        return [{
+            'ctrl': main_control,
+        },{
+            'mch'     : mch,
+            'tweak'   : twk,
+            'controls'   : controls,
+            'subcontrols': subcontrols,
+            'control_parents': control_parents,
+            'flex_bones': flex_bones,
+            'flex_subs': flex_subs,
+            'rev_bones': rev_bones,
+            'torso_bones': torso_bones
+        }]
+
+    def parent_pivot_slide_torso_bones(self, bones):
+        eb = self.obj.data.edit_bones
+        data = bones['chest']
+
+        # Parent controls
+        main_control = bones['pivot']['ctrl']
+
+        eb[main_control].parent = eb[self.org_bones[0]].parent
+
+        controls = data['controls']
+
+        for name, subname in zip(controls, data['subcontrols']):
+            eb[name].parent = eb[main_control]
+            eb[subname].parent = eb[name]
+
+        for name, par_name in zip(controls[1:-1], data['control_parents']):
+            eb[par_name].parent = eb[main_control]
+            eb[name].parent = eb[par_name]
+
+        # Parent flex and reverse chains
+        prev_bone = None
+
+        for bone, sub, rev in zip(data['flex_bones'], data['flex_subs'], data['rev_bones']):
+            if prev_bone:
+                eb[sub].parent = eb[prev_bone]
+                eb[sub].use_connect = True
+            else:
+                eb[sub].parent = eb[controls[0]]
+
+            eb[bone].parent = eb[sub]
+            eb[rev].parent = eb[bone]
+            prev_bone = bone
+
+        # Parent mch and tweaks
+        prev_bone = None
+
+        for mch, twk in zip(data['mch'], data['tweak']):
+            if prev_bone:
+                eb[mch].parent = eb[prev_bone]
+                eb[mch].use_connect = True
+            else:
+                eb[mch].parent = eb[self.org_bones[0]].parent
+
+            eb[twk].parent = eb[mch]
+            prev_bone = mch
+
+    def parent_torso_bones(self, bones):
+        eb = self.obj.data.edit_bones
+
+        # Parent hips and chest controls to torso
+        eb[bones['chest']['ctrl']].parent = eb[bones['pivot']['ctrl']]
+        eb[bones['hips']['ctrl']].parent = eb[bones['pivot']['ctrl']]
+
+        # Chest mch bones and neck mch
+        for i, b in enumerate(bones['chest']['mch']):
+            if i == 0:
+                eb[b].parent = eb[bones['pivot']['ctrl']]
+            elif b:
+                eb[b].parent = eb[bones['chest']['mch'][i-1]]
+
+        # Hips mch bones
+        for i, b in enumerate(bones['hips']['mch']):
+            if i == len(bones['hips']['mch']) - 1:
+                eb[b].parent = eb[bones['pivot']['ctrl']]
+            else:
+                eb[b].parent = eb[bones['hips']['mch'][i+1]]
+
+        # mch pivot
+        eb[bones['pivot']['mch']].parent = eb[bones['chest']['mch'][0]]
+
+        # MCH widgets
+        eb[bones['chest']['mch_wgt']].parent = eb[bones['chest']['mch'][-1]]
+        eb[bones['hips']['mch_wgt']].parent = eb[bones['hips']['mch'][0]]
+
+        # Chest tweaks
+        for twk, mch in zip( bones['chest']['tweak'], bones['chest']['mch']):
+            if bones['chest']['tweak'].index(twk) == 0:
+                eb[twk].parent = eb[bones['pivot']['mch']]
+            else:
+                eb[twk].parent = eb[mch]
+
+        # Hips tweaks
+        for i, twk in enumerate(bones['hips']['tweak']):
+            if i == 0:
+                eb[twk].parent = eb[bones['hips']['mch'][i]]
+            else:
+                eb[twk].parent = eb[bones['hips']['mch'][i-1]]
+
     def parent_bones(self, bones):
         org_bones = self.org_bones
         bpy.ops.object.mode_set(mode='EDIT')
@@ -441,6 +677,15 @@ class Rig(ConstraintUtilityMixin):
             if i > 0:   # For all bones but the first (which has no parent)
                 eb[b].parent = eb[bones['def'][i-1]]    # to previous
                 eb[b].use_connect = True
+
+        if self.use_pivot_slide:
+            self.parent_pivot_slide_torso_bones(bones)
+
+            torso_tweaks = bones['chest']['tweak']
+        else:
+            self.parent_torso_bones(bones)
+
+            torso_tweaks = bones['hips']['tweak'] + bones['chest']['tweak']
 
         # Parent control bones
         # Head control => MCH-rotation_head
@@ -467,10 +712,6 @@ class Rig(ConstraintUtilityMixin):
                 # eb[bones['neck']['neck_bend']].parent = eb[bones['neck']['ctrl_neck']]
                 eb[bones['neck']['neck_bend']].parent = eb[bones['neck']['mch_str']]
 
-        # Parent hips and chest controls to torso
-        eb[bones['chest']['ctrl']].parent = eb[bones['pivot']['ctrl']]
-        eb[bones['hips']['ctrl']].parent = eb[bones['pivot']['ctrl']]
-
         # Parent mch bones
         if bones['neck']['ctrl_neck']:
             # Neck mch
@@ -484,27 +725,8 @@ class Rig(ConstraintUtilityMixin):
             #     if org_b in b.name:
             #         b.parent = eb[org(org_b)]
 
-        # Chest mch bones and neck mch
-        chest_mch = bones['chest']['mch'] + [bones['neck']['mch_neck']]
-        for i, b in enumerate(chest_mch):
-            if i == 0:
-                eb[b].parent = eb[bones['pivot']['ctrl']]
-            elif b:
-                eb[b].parent = eb[chest_mch[i-1]]
-
-        # Hips mch bones
-        for i, b in enumerate(bones['hips']['mch']):
-            if i == len(bones['hips']['mch']) - 1:
-                eb[b].parent = eb[bones['pivot']['ctrl']]
-            else:
-                eb[b].parent = eb[bones['hips']['mch'][i+1]]
-
-        # mch pivot
-        eb[bones['pivot']['mch']].parent = eb[bones['chest']['mch'][0]]
-
-        # MCH widgets
-        eb[bones['chest']['mch_wgt']].parent = eb[bones['chest']['mch'][-1]]
-        eb[bones['hips']['mch_wgt']].parent = eb[bones['hips']['mch'][0]]
+        if bones['neck']['mch_neck']:
+            eb[bones['neck']['mch_neck']].parent = eb[bones['chest']['mch'][-1]]
 
         # Neck Tweaks
         if bones['neck']['tweak']:
@@ -515,24 +737,10 @@ class Rig(ConstraintUtilityMixin):
                 else:
                     eb[twk].parent = eb[ bones['neck']['mch'][i-1]]
 
-        # Chest tweaks
-        for twk, mch in zip( bones['chest']['tweak'], bones['chest']['mch']):
-            if bones['chest']['tweak'].index(twk) == 0:
-                eb[twk].parent = eb[bones['pivot']['mch']]
-            else:
-                eb[twk].parent = eb[mch]
-
-        # Hips tweaks
-        for i, twk in enumerate(bones['hips']['tweak']):
-            if i == 0:
-                eb[twk].parent = eb[bones['hips']['mch'][i]]
-            else:
-                eb[twk].parent = eb[bones['hips']['mch'][i-1]]
-
         # Tail mchs
         if self.use_tail:
             mch_rot_tail = bones['tail']['mch_tail']
-            eb[mch_rot_tail].parent = eb[bones['hips']['tweak'][0]]
+            eb[mch_rot_tail].parent = eb[torso_tweaks[0]]
 
         # Tail tweaks
         if self.use_tail:
@@ -547,7 +755,8 @@ class Rig(ConstraintUtilityMixin):
         if self.use_tail:
             tweaks += bones['tail']['tweak']
 
-        tweaks += bones['hips']['tweak'] + bones['chest']['tweak']
+        tweaks += torso_tweaks
+
         if self.use_head:
             tweaks += bones['neck']['tweak'] + [bones['neck']['ctrl']]
 
@@ -564,6 +773,115 @@ class Rig(ConstraintUtilityMixin):
         if self.use_head:
             eb[org_bones[-1]].parent = eb[bones['neck']['ctrl']]
 
+
+    def constrain_pivot_slide_torso_bones(self, bones):
+        pb = self.obj.pose.bones
+        data = bones['chest']
+
+        #-----------------------------------------
+        # Intermediate controls follow hips and shoulders
+
+        main_control = bones['pivot']['ctrl']
+
+        controls = data['controls']
+        subcontrols = data['subcontrols']
+        control_parents = data['control_parents']
+        torso_bones = data['torso_bones']
+
+        for name, par_name, i in zip(controls[1:-1], control_parents, self.control_indices[1:-1]):
+            self.make_property(name, "bend_alpha", default=i / (len(torso_bones) - 1))
+            self.make_property(name, "auto_rotate", default=1.0)
+
+            # hips
+            con1 = self.make_constraint(par_name, 'COPY_TRANSFORMS', subcontrols[0]);
+
+            self.make_driver(con1, 'influence', variables=[[name, 'auto_rotate']])
+
+            # shoulders
+            con2 = self.make_constraint(par_name, 'COPY_TRANSFORMS', subcontrols[-1]);
+
+            self.make_driver(
+                con2, "influence", expression="alpha * auto",
+                variables={
+                    'alpha': [name, 'bend_alpha'],
+                    'auto': [name, 'auto_rotate'],
+                }
+            )
+
+        #----------------------------------
+        # Constrain flex spine to controls
+
+        flex_subs = data['flex_subs']
+
+        for i, name in zip(self.control_indices, subcontrols):
+            self.make_constraint(flex_subs[i], 'COPY_TRANSFORMS', name)
+
+        for i, j, name1, name2 in zip(self.control_indices, self.control_indices[1:], subcontrols, subcontrols[1:]):
+            for n in range(i + 1, j):
+                bone = flex_subs[n]
+                alpha = (n - i) / (j - i)
+
+                self.make_constraint(bone, 'COPY_TRANSFORMS', name1)
+                self.make_constraint(bone, 'COPY_TRANSFORMS', name2, influence=alpha)
+
+        #----------------------------------------
+        # Link reverse spine
+
+        rev_bones = data['rev_bones']
+        prev_bone = None
+
+        for bone in rev_bones:
+            if prev_bone:
+                self.make_constraint(bone, 'COPY_LOCATION', prev_bone, head_tail=1.0)
+            else:
+                self.make_constraint(bone, 'COPY_LOCATION', main_control);
+
+            prev_bone = bone
+
+        #----------------------------------------
+        # Constrain mch bones to flex spine
+
+        flex_bones = data['flex_bones']
+
+        for mch, fbone in zip(data['mch'], flex_bones):
+            self.make_constraint(mch, 'COPY_TRANSFORMS', fbone)
+
+        #---------------------------
+        # Create pivot slide system
+
+        base_bone = data['mch'][0]
+        main_control_p = pb[main_control]
+
+        self.make_property(
+            main_control, "pivot_slide", default=self.pivot_rest,
+            soft_min=1.0 / self.torso_size, soft_max=1.0 - (1.0 / self.torso_size)
+        )
+
+        self.make_constraint(base_bone, 'COPY_LOCATION', rev_bones[0]);
+
+        for i, rb in enumerate(rev_bones):
+            con = self.make_constraint(base_bone, 'COPY_LOCATION', rb, name="slide."+str(i+1), head_tail=1.0);
+
+            self.make_driver(
+                con, "influence",
+                variables=[[main_control, 'pivot_slide']],
+                polynomial=[-i, len(rev_bones)],
+            )
+
+    def constrain_torso_bones(self, bones):
+        # Intermediary mch bones
+        intermediaries = [bones['chest'], bones['hips']]
+
+        for l in intermediaries:
+            mch = l['mch']
+
+            for j, b in enumerate(mch):
+                factor = float(1 / len(l['tweak']))
+                self.make_constraint(b, 'COPY_TRANSFORMS', l['ctrl'], influence=factor, space='LOCAL')
+
+        # MCH pivot
+        self.make_constraint(bones['pivot']['mch'], 'COPY_TRANSFORMS', bones['hips']['mch'][-1], space='LOCAL')
+
     def constrain_bones(self, bones):
         bpy.ops.object.mode_set(mode='OBJECT')
         pb = self.obj.pose.bones
@@ -572,6 +890,15 @@ class Rig(ConstraintUtilityMixin):
         torso = bones['pivot']['ctrl']
 
         # MCH bones
+        if self.use_pivot_slide:
+            self.constrain_pivot_slide_torso_bones(bones)
+
+            torso_tweaks = bones['chest']['tweak']
+        else:
+            self.constrain_torso_bones(bones)
+
+            torso_tweaks = bones['hips']['tweak'] + bones['chest']['tweak']
+
         # head and neck MCH bones
         mch_head = bones['neck']['mch_head']
         if mch_head:
@@ -594,37 +921,28 @@ class Rig(ConstraintUtilityMixin):
             self.make_constraint(bones['neck']['mch_str'], 'DAMPED_TRACK', bones['neck']['ctrl'])
             self.make_constraint(bones['neck']['mch_str'], 'STRETCH_TO', bones['neck']['ctrl'])
 
-        # Intermediary mch bones
-        intermediaries = [bones['neck'], bones['chest'], bones['hips']]
+        # Neck mch-s
+        l = bones['neck']
+        mch = l['mch']
+        for j, b in enumerate(mch):
+            if len(bones['neck']['original_names']) > 3:
+                self.make_constraint(b, 'COPY_LOCATION', org(l['original_names'][j+1]), influence=1.0)
+            else:
+                nfactor = float((j + 1) / len(mch))
+                self.make_constraint(b, 'COPY_ROTATION', l['ctrl'], influence=nfactor)
 
-        for i, l in enumerate(intermediaries):
-            mch = l['mch']
+            step = 2/(len(mch)+1)
+            xval = (j+1)*step
+            influence = 2*xval - xval**2    #parabolic influence of pivot
 
-            for j, b in enumerate(mch):
+            if bones['neck']['neck_bend']:
+                self.make_constraint(
+                    b, 'COPY_LOCATION', l['neck_bend'],
+                    influence=influence, use_offset=True, space='LOCAL'
+                )
 
-                if i == 0:      # Neck mch-s
-                    if len(bones['neck']['original_names']) > 3:
-                        self.make_constraint(b, 'COPY_LOCATION', org(l['original_names'][j+1]), influence=1.0)
-                    else:
-                        nfactor = float((j + 1) / len(mch))
-                        self.make_constraint(b, 'COPY_ROTATION', l['ctrl'], influence=nfactor)
-
-                    step = 2/(len(mch)+1)
-                    xval = (j+1)*step
-                    influence = 2*xval - xval**2    #parabolic influence of pivot
-
-                    if bones['neck']['neck_bend']:
-                        self.make_constraint(
-                            b, 'COPY_LOCATION', l['neck_bend'],
-                            influence=influence, use_offset=True, space='LOCAL'
-                        )
-
-                    if len(bones['neck']['original_names']) > 3:
-                        self.make_constraint(b, 'COPY_SCALE', org(l['original_names'][j+1]), influence=1.0)
-
-                else:
-                    factor = float(1 / len(l['tweak']))
-                    self.make_constraint(b, 'COPY_TRANSFORMS', l['ctrl'], influence=factor, space='LOCAL')
+            if len(bones['neck']['original_names']) > 3:
+                self.make_constraint(b, 'COPY_SCALE', org(l['original_names'][j+1]), influence=1.0)
 
         # Tail ctrls
         if self.use_tail:
@@ -643,17 +961,14 @@ class Rig(ConstraintUtilityMixin):
             self.make_property(torso, 'tail_follow', default=0.0)
             self.make_driver(con, 'influence', variables=[[torso, 'tail_follow']], polynomial=[1,-1])
 
-
-        # MCH pivot
-        self.make_constraint(bones['pivot']['mch'], 'COPY_TRANSFORMS', bones['hips']['mch'][-1], space='LOCAL')
-
         # DEF bones
         deform = bones['def']
         tweaks = []
         if self.use_tail:
             tweaks += bones['tail']['tweak']
 
-        tweaks += bones['hips']['tweak'] + bones['chest']['tweak']
+        tweaks += torso_tweaks
+
         if self.use_head:
             tweaks += bones['neck']['tweak'] + [bones['neck']['ctrl']]
 
@@ -704,7 +1019,9 @@ class Rig(ConstraintUtilityMixin):
 
         # Locks
         tweaks = bones['neck']['tweak'] + bones['chest']['tweak']
-        tweaks += bones['hips']['tweak']
+
+        if not self.use_pivot_slide:
+            tweaks += bones['hips']['tweak']
 
         if self.use_tail:
             tweaks += bones['tail']['tweak']
@@ -726,10 +1043,27 @@ class Rig(ConstraintUtilityMixin):
         )
 
         # Assigning widgets to control bones
-        gen_ctrls = [
-            bones['chest']['ctrl'],
-            bones['hips']['ctrl']
-        ]
+        gen_ctrls = []
+        chest = ''
+
+        if self.use_pivot_slide:
+            mch_bones = bones['chest']['mch']
+
+            for name, i in zip(bones['chest']['controls'], self.control_indices):
+                pb[name].custom_shape_transform = pb[mch_bones[i]]
+
+                create_circle_widget(
+                    self.obj, name,
+                    radius=1.0, head_tail=0.5, with_line=False,
+                    bone_transform_name=mch_bones[i]
+                )
+
+        else:
+            chest = bones['chest']['ctrl']
+            gen_ctrls += [
+                bones['chest']['ctrl'],
+                bones['hips']['ctrl']
+            ]
 
         tail_ctrls = []
         if self.use_tail and bones['tail']['ctrl']:
@@ -751,7 +1085,7 @@ class Rig(ConstraintUtilityMixin):
                 radius = 1.0
 
             # place chest on neck-base for very long necks
-            if bone == bones['chest']['ctrl'] and len(bones['neck']['original_names']) > 3:
+            if bone == chest and len(bones['neck']['original_names']) > 3:
                 head_tail = 0.0
             else:
                 head_tail = 0.75
@@ -810,16 +1144,19 @@ class Rig(ConstraintUtilityMixin):
             )
 
         # place widgets on correct bones
-        chest_widget_loc = pb[bones['chest']['mch_wgt']]
-        pb[bones['chest']['ctrl']].custom_shape_transform = chest_widget_loc
+        if not self.use_pivot_slide:
+            chest_widget_loc = pb[bones['chest']['mch_wgt']]
 
-        hips_widget_loc = pb[bones['hips']['mch_wgt']]
+            pb[bones['chest']['ctrl']].custom_shape_transform = chest_widget_loc
+
+            hips_widget_loc = pb[bones['hips']['mch_wgt']]
+            if self.use_tail:
+                hips_widget_loc = pb[bones['def'][self.tail_pos]]
+
+            pb[bones['hips']['ctrl']].custom_shape_transform = hips_widget_loc
 
         if self.use_tail:
-            hips_widget_loc = pb[bones['def'][self.tail_pos]]
             pb[bones['tail']['ctrl_tail']].custom_shape_transform = pb[bones['tail']['tweak'][0]]
-
-        pb[bones['hips']['ctrl']].custom_shape_transform = hips_widget_loc
 
         # Assigning widgets to tweak bones and layers
         for bone in tweaks:
@@ -861,10 +1198,16 @@ class Rig(ConstraintUtilityMixin):
             bones = {}
 
             bones['def'] = self.create_deform()     # Gets org bones from self
-            bones['pivot'] = self.create_pivot(self.pivot_pos)
+
+            if self.use_pivot_slide:
+                info = self.create_pivot_slide_torso(upper_torso_bones)
+                bones['pivot'], bones['chest'] = info
+            else:
+                bones['pivot'] = self.create_pivot(self.pivot_pos)
+                bones['chest'] = self.create_chest(upper_torso_bones)
+                bones['hips'] = self.create_hips(lower_torso_bones)
+
             bones['neck'] = self.create_neck(neck_bones)
-            bones['chest'] = self.create_chest(upper_torso_bones)
-            bones['hips'] = self.create_hips(lower_torso_bones)
 
             # TODO: Add create tail
             if tail_bones:
@@ -882,7 +1225,10 @@ class Rig(ConstraintUtilityMixin):
             return
 
         controls = [bones['neck']['ctrl'],  bones['neck']['ctrl_neck']]
-        controls += [bones['chest']['ctrl'], bones['hips']['ctrl']]
+        if self.use_pivot_slide:
+            controls += bones['chest']['controls']
+        else:
+            controls += [bones['chest']['ctrl'], bones['hips']['ctrl']]
         controls += [bones['pivot']['ctrl']]
 
         if self.use_tail:
@@ -890,16 +1236,17 @@ class Rig(ConstraintUtilityMixin):
 
         # Create UI
         controls_string = ", ".join(["'" + x + "'" for x in controls])
-        return [script % (
-            controls_string,
-            bones['pivot']['ctrl'],
-            'head_follow',
-            'head_follow',
-            'neck_follow',
-            'neck_follow',
-            'tail_follow',
-            'tail_follow',
-            )]
+        script_str = script % (controls_string, bones['pivot']['ctrl'])
+
+        script_str += script_attr % ('head_follow', 'head_follow')
+        if self.use_head:
+            script_str += script_attr % ('neck_follow', 'neck_follow')
+        if self.use_tail:
+            script_str += script_attr % ('tail_follow', 'tail_follow')
+        if self.use_pivot_slide:
+            script_str += script_attr % ('pivot_slide', 'pivot_slide')
+
+        return [script_str]
 
 
 def add_parameters(params):
@@ -939,10 +1286,28 @@ def add_parameters(params):
         description='Create tail bones'
     )
 
+    params.use_pivot_slide = bpy.props.BoolProperty(
+        name='use_pivot_slide',
+        default=False,
+        description='Allow changing the pivot position dynamically'
+    )
+
     params.use_head = bpy.props.BoolProperty(
         name='use_head',
         default=True,
         description='Create head and neck bones'
+    )
+
+    # Pivot Slide mode parameters
+    params.rest_pivot_slide = bpy.props.FloatProperty(
+        name="rest_pivot_slide",
+        default=0.25, min=0.0, max=1.0, soft_min=0.0, soft_max=1.0,
+        description="The pivot slide value in the rest pose"
+    )
+
+    params.spine_control_list = bpy.props.StringProperty(
+        name="Extra controls", default="",
+        description="Comma separated list of indexes that should get additional spine bend controls"
     )
 
     # Setting up extra layers for the FK and tweak
@@ -964,14 +1329,22 @@ def parameters_ui(layout, params):
 
     r = layout.row(align=True)
     r.prop(params, "use_head", toggle=True, text="Head")
+    r.prop(params, "use_pivot_slide", toggle=True, text="Pivot Slide")
     r.prop(params, "use_tail", toggle=True, text="Tail")
 
     r = layout.row()
     r.prop(params, "neck_pos")
     r.enabled = params.use_head
 
-    r = layout.row()
-    r.prop(params, "pivot_pos")
+    if params.use_pivot_slide:
+        r = layout.row()
+        r.prop(params, "rest_pivot_slide")
+
+        r = layout.row()
+        r.prop(params, "spine_control_list")
+    else:
+        r = layout.row()
+        r.prop(params, "pivot_pos")
 
     r = layout.row()
     r.prop(params, "tail_pos")
