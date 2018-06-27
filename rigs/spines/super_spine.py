@@ -696,7 +696,7 @@ class Rig:
             for i, b in enumerate(tail_ctrl[:-1]):
                 eb[b].parent = eb[tail_ctrl[i+1]]
             eb[tail_ctrl[-1]].parent = eb[bones['tail']['mch_tail']]
-            eb[bones['tail']['ctrl_tail']].parent = eb[org_bones[self.tail_pos]]
+            eb[bones['tail']['ctrl_tail']].parent = eb[torso_tweaks[0]]
 
         if bones['neck']['ctrl_neck']:
             # MCH stretch => neck ctrl
@@ -770,6 +770,8 @@ class Rig:
 
         if self.use_head:
             eb[org_bones[-1]].parent = eb[bones['neck']['ctrl']]
+        else:
+            eb[org_bones[-1]].parent = eb[tweaks[-1]]
 
     def make_constraint(self, bone, constraint):
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -1010,8 +1012,11 @@ class Rig:
         # Neck mch-s
         l = bones['neck']
         mch = l['mch']
+
+        has_long_neck = len(bones['neck']['original_names']) > 3
+
         for j, b in enumerate(mch):
-            if len(bones['neck']['original_names']) > 3:
+            if has_long_neck:
                 self.make_constraint(b, {
                     'constraint': 'COPY_LOCATION',
                     'subtarget': org(l['original_names'][j+1]),
@@ -1039,7 +1044,7 @@ class Rig:
                     'target_space': 'LOCAL'
                 })
 
-            if len(bones['neck']['original_names']) > 3:
+            if has_long_neck:
                 self.make_constraint(b, {
                     'constraint': 'COPY_SCALE',
                     'subtarget': org(l['original_names'][j+1]),
@@ -1078,32 +1083,36 @@ class Rig:
             tweaks += bones['tail']['tweak']
 
         tweaks += torso_tweaks
+        non_head_tweaks = len(tweaks)
 
         if self.use_head:
             tweaks += bones['neck']['tweak'] + [bones['neck']['ctrl']]
 
-        for d, t in zip(deform, tweaks):
-            tidx = tweaks.index(t)
+        for tidx, (d, t, o) in enumerate(zip(deform, tweaks, self.org_bones)):
+            if tidx < non_head_tweaks or not has_long_neck:
+                copy_tgt, track_bone = o, o
+            else:
+                copy_tgt, track_bone = t, d
 
             self.make_constraint(d, {
                 'constraint': 'COPY_TRANSFORMS',
-                'subtarget': t
+                'subtarget': copy_tgt,
             })
 
             if tidx != len(tweaks) - 1:
                 if self.use_tail and t in bones['tail']['tweak']:
-                    self.make_constraint(d, {
+                    self.make_constraint(track_bone, {
                         'constraint': 'DAMPED_TRACK',
                         'subtarget': tweaks[tidx + 1],
                         'track_axis': 'TRACK_NEGATIVE_Y'
                     })
                 else:
-                    self.make_constraint(d, {
+                    self.make_constraint(track_bone, {
                         'constraint': 'DAMPED_TRACK',
                         'subtarget': tweaks[tidx + 1],
                     })
 
-                self.make_constraint(d, {
+                self.make_constraint(track_bone, {
                     'constraint': 'STRETCH_TO',
                     'subtarget': tweaks[tidx + 1],
                 })
