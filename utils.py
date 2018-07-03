@@ -1427,3 +1427,183 @@ def make_track_constraint_from_string(owner, target, subtarget, fstring):
         const.target_space = constraint_space[cns_props[3][0]] if bool(cns_props[3]) else "LOCAL"
         const.owner_space = constraint_space[cns_props[3][1]] if bool(cns_props[3]) else "LOCAL"
         const.head_tail = float(cns_props[4]) if bool(cns_props[4]) else 0.0
+
+#=============================================
+# Constraint creation utilities
+#=============================================
+
+TRACK_AXIS_MAP =  {'X': 'TRACK_X', '-X': 'TRACK_NEGATIVE_X', 'Y': 'TRACK_Y', '-Y': 'TRACK_NEGATIVE_Y',
+'Z': 'TRACK_Z', '-Z': 'TRACK_NEGATIVE_Z'}
+
+def make_constraint(
+        owner, type, target=None, subtarget=None,
+        space=None, track_axis=None, use_xyz=None,
+        **options):
+    """
+    Creates and initializes constraint of the specified type for the owner bone.
+
+    Specially handled keyword arguments:
+
+      target, subtarget: if both not None, passed through to the constraint
+      space            : assigned to both owner_space and target_space
+      track_axis       : allows shorter X, Y, Z, -X, -Y, -Z notation
+      use_xyz          : list items assigned to use_x, use_y and use_z options
+      min/max_x/y/z    : a corresponding use_min/max_x/y/z option is set to True
+
+    Other keyword arguments are directly assigned to the constraint options.
+    Returns the newly created constraint.
+    """
+    const = owner.constraints.new(type)
+
+    if target is not None and subtarget is not None:
+        const.target = target
+        const.subtarget = subtarget
+
+    if space is not None:
+        const.owner_space = const.target_space = space
+
+    if track_axis is not None:
+        const.track_axis = TRACK_AXIS_MAP.get(track_axis, track_axis)
+
+    if use_xyz is not None:
+        const.use_x, const.use_y, const.use_z = use_xyz[0:3]
+
+    for key in ['min_x', 'max_x', 'min_y', 'max_y', 'min_z', 'max_z']:
+        if key in options and 'use_'+key not in options:
+            options['use_'+key] = True
+
+    for p, v in options.items():
+        setattr(const, p, v)
+
+    return const
+
+def make_property(owner, name, default=0.0, min=0.0, max=1.0, soft_min=None, soft_max=None):
+    """Creates and initializes a custom property of owner"""
+    owner[name] = default
+
+    prop = rna_idprop_ui_prop_get(owner, name, create=True)
+    prop["min"] = min
+    prop["soft_min"] = soft_min if soft_min is not None else min
+    prop["max"] = max
+    prop["soft_max"] = soft_max if soft_max is not None else max
+
+    return prop
+
+def make_driver_variable(drv, var_name, var_info, target_id=None):
+    var = drv.variables.new()
+    var.name = var_name
+
+    # variable is [ (target_id,) subtarget, ...path ]
+    if isinstance(var_info, list):
+        # If target_id is supplied as parameter, allow omitting it
+        if target_id is None or isinstance(var_info[0], bpy.types.ID):
+            target_id,subtarget,*refs = var_info
+        else:
+            subtarget,*refs = var_info
+
+        if len(refs) == 0:
+            path = subtarget
+        else:
+            # If subtarget is a string, look up a bone
+            if isinstance(subtarget,str):
+                subtarget = target_id.pose.bones[subtarget]
+
+            # Use ".foo" type path items verbatim, otherwise quote
+            path = subtarget.path_from_id()
+            for item in refs:
+                path += item if item[0] == '.' else '["'+item+'"]'
+
+        var.type = "SINGLE_PROP"
+        var.targets[0].id = target_id
+        var.targets[0].data_path = path
+
+    # variable info as generic dictionary - assign properties
+    # { 'type': 'SINGLE_PROP', 'targets':[{ 'id':..., 'data_path':... }] }
+    else:
+        var.type = var_info['type']
+
+        for p, v in var_info.items():
+            if p == 'targets':
+                for i, tdata in enumerate(v):
+                    if target_id is not None:
+                        var.targets[i].id = target_id
+                    for tp, tv in tdata.items():
+                        setattr(var.targets[i], tp, tv)
+            elif p != 'type':
+                setattr(var, p, v)
+
+def make_driver(owner, prop, type='SUM', expression=None, variables={}, polynomial=None, target_id=None):
+    """
+    Creates and initializes a driver for the 'prop' property of owner.
+
+    Arguments:
+      type, expression: mutually exclusive options to set core driver mode.
+      variables       : either a list or dictionary of variable specifications.
+
+        If dictionary, keys specify variable names. Otherwise names are set to var0, var1...
+        Variable specifications in turn may have two possible formats - simple list or dictionary.
+
+        The following specifications are equivalent:
+
+          [base, '.foo', 'bar']            IF target_id PARAMETER EXISTS
+
+          [target_id, base, '.foo', 'bar']
+
+          { 'type': 'SINGLE_PROP',
+            'targets':[{ 'id': target_id,
+                         'data_path': base.path_from_id() + '.foo' + '["bar"]' }] }
+
+        If base is as string, it is looked up within target_id as a bone.
+
+        The following simple form is also possible:
+
+          [target_id, 'path']
+
+          { 'type': 'SINGLE_PROP', 'targets':[{ 'id': target_id, 'data_path': 'path' }] }
+
+      polynomial      : coefficients of the POLYNOMIAL driver modifier
+      target_id       : specifies the target ID of variables implicitly
+    """
+    fcu = owner.driver_add(prop)
+    drv = fcu.driver
+
+    if expression is not None:
+        drv.type = 'SCRIPTED'
+        drv.expression = expression
+    else:
+        drv.type = type
+
+    # variables = { 'varname': info, ... } or [ info, ... ]
+    if isinstance(variables, list):
+        for i, var_info in enumerate(variables):
+            make_driver_variable(drv, 'var'+str(i), var_info, target_id)
+    else:
+        for var_name, var_info in variables.items():
+            make_driver_variable(drv, var_name, var_info, target_id)
+
+    if polynomial is not None:
+        drv_modifier = fcu.modifiers[0]
+        drv_modifier.mode = 'POLYNOMIAL'
+        drv_modifier.poly_order = len(polynomial)-1
+        for i,v in enumerate(polynomial):
+            drv_modifier.coefficients[i] = v
+
+    return fcu
+
+class ConstraintUtilityMixin:
+    """
+    Provides methods for more convenient creation of constraints, properties
+    and drivers within an armature (by implicitly providing context).
+    """
+
+    def make_constraint(self, bone, type, subtarget=None, **args):
+        assert(self.obj.mode == 'OBJECT')
+        return make_constraint(self.obj.pose.bones[bone], type, self.obj, subtarget, **args)
+
+    def make_property(self, bone, name, **args):
+        assert(self.obj.mode == 'OBJECT')
+        return make_property(self.obj.pose.bones[bone], name, **args)
+
+    def make_driver(self, owner, prop, **args):
+        assert(self.obj.mode == 'OBJECT')
+        return make_driver(owner, prop, target_id=self.obj, **args)

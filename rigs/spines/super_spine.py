@@ -5,6 +5,7 @@ from ...utils import strip_org, make_deformer_name, connected_children_names
 from ...utils import create_circle_widget, create_sphere_widget, create_neck_bend_widget, create_neck_tweak_widget
 from ..widgets import create_ballsocket_widget
 from ...utils import MetarigError, make_mechanism_name, create_cube_widget
+from ...utils import ConstraintUtilityMixin
 from rna_prop_ui import rna_idprop_ui_prop_get
 
 script = """
@@ -21,7 +22,7 @@ if is_selected( controls ):
 """
 
 
-class Rig:
+class Rig(ConstraintUtilityMixin):
 
     def __init__(self, obj, bone_name, params):
         """ Initialize torso rig and key rig properties """
@@ -563,44 +564,35 @@ class Rig:
         if self.use_head:
             eb[org_bones[-1]].parent = eb[bones['neck']['ctrl']]
 
-    def make_constraint(self, bone, constraint):
+    def constrain_bones(self, bones):
         bpy.ops.object.mode_set(mode='OBJECT')
         pb = self.obj.pose.bones
 
-        owner_pb = pb[bone]
-        const = owner_pb.constraints.new(constraint['constraint'])
-        const.target = self.obj
+        # Setting the torso's props
+        torso = bones['pivot']['ctrl']
 
-        # filter contraint props to those that actually exist in the currnet
-        # type of constraint, then assign values to each
-        for p in [k for k in constraint.keys() if k in dir(const)]:
-            setattr(const, p, constraint[p])
-
-    def constrain_bones(self, bones):
         # MCH bones
-
         # head and neck MCH bones
-        for b in [bones['neck']['mch_head'], bones['neck']['mch_neck']]:
-            if b:
-                self.make_constraint(b, {
-                    'constraint': 'COPY_ROTATION',
-                    'subtarget': bones['pivot']['ctrl'],
-                })
-                self.make_constraint(b, {
-                    'constraint': 'COPY_SCALE',
-                    'subtarget': bones['pivot']['ctrl'],
-                })
+        mch_head = bones['neck']['mch_head']
+        if mch_head:
+            con = self.make_constraint(mch_head, 'COPY_ROTATION', torso)
+            self.make_constraint(mch_head, 'COPY_SCALE', torso)
+
+            self.make_property(torso, 'head_follow', default=0.0)
+            self.make_driver(con, 'influence', variables=[[torso, 'head_follow']], polynomial=[1,-1])
+
+        mch_neck = bones['neck']['mch_neck']
+        if mch_neck:
+            con = self.make_constraint(mch_neck, 'COPY_ROTATION', torso)
+            self.make_constraint(mch_neck, 'COPY_SCALE', torso)
+
+            self.make_property(torso, 'neck_follow', default=0.5)
+            self.make_driver(con, 'influence', variables=[[torso, 'neck_follow']], polynomial=[1,-1])
 
         if bones['neck']['mch_str']:
             # Neck MCH Stretch
-            self.make_constraint(bones['neck']['mch_str'], {
-                'constraint': 'DAMPED_TRACK',
-                'subtarget': bones['neck']['ctrl'],
-            })
-            self.make_constraint(bones['neck']['mch_str'], {
-                'constraint': 'STRETCH_TO',
-                'subtarget': bones['neck']['ctrl'],
-            })
+            self.make_constraint(bones['neck']['mch_str'], 'DAMPED_TRACK', bones['neck']['ctrl'])
+            self.make_constraint(bones['neck']['mch_str'], 'STRETCH_TO', bones['neck']['ctrl'])
 
         # Intermediary mch bones
         intermediaries = [bones['neck'], bones['chest'], bones['hips']]
@@ -612,49 +604,27 @@ class Rig:
 
                 if i == 0:      # Neck mch-s
                     if len(bones['neck']['original_names']) > 3:
-                        self.make_constraint(b, {
-                            'constraint': 'COPY_LOCATION',
-                            'subtarget': org(l['original_names'][j+1]),
-                            'influence': 1.0
-                        })
+                        self.make_constraint(b, 'COPY_LOCATION', org(l['original_names'][j+1]), influence=1.0)
                     else:
                         nfactor = float((j + 1) / len(mch))
-                        self.make_constraint(b, {
-                            'constraint': 'COPY_ROTATION',
-                            'subtarget': l['ctrl'],
-                            'influence': nfactor
-                        })
+                        self.make_constraint(b, 'COPY_ROTATION', l['ctrl'], influence=nfactor)
 
                     step = 2/(len(mch)+1)
                     xval = (j+1)*step
                     influence = 2*xval - xval**2    #parabolic influence of pivot
 
                     if bones['neck']['neck_bend']:
-                        self.make_constraint(b, {
-                            'constraint': 'COPY_LOCATION',
-                            'subtarget': l['neck_bend'],
-                            'influence': influence,
-                            'use_offset': True,
-                            'owner_space': 'LOCAL',
-                            'target_space': 'LOCAL'
-                        })
+                        self.make_constraint(
+                            b, 'COPY_LOCATION', l['neck_bend'],
+                            influence=influence, use_offset=True, space='LOCAL'
+                        )
 
                     if len(bones['neck']['original_names']) > 3:
-                        self.make_constraint(b, {
-                            'constraint': 'COPY_SCALE',
-                            'subtarget': org(l['original_names'][j+1]),
-                            'influence': 1.0
-                        })
+                        self.make_constraint(b, 'COPY_SCALE', org(l['original_names'][j+1]), influence=1.0)
 
                 else:
                     factor = float(1 / len(l['tweak']))
-                    self.make_constraint(b, {
-                        'constraint': 'COPY_TRANSFORMS',
-                        'subtarget': l['ctrl'],
-                        'influence': factor,
-                        'owner_space': 'LOCAL',
-                        'target_space': 'LOCAL'
-                    })
+                    self.make_constraint(b, 'COPY_TRANSFORMS', l['ctrl'], influence=factor, space='LOCAL')
 
         # Tail ctrls
         if self.use_tail:
@@ -662,32 +632,20 @@ class Rig:
             tail_ctrl.append(bones['tail']['ctrl_tail'])
 
             for i, b in enumerate(tail_ctrl[:-1]):
-                self.make_constraint(b, {
-                    'constraint': 'COPY_ROTATION',
-                    'subtarget': tail_ctrl[i+1],
-                    'influence': 1.0,
-                    'use_x': self.copy_rotation_axes[0],
-                    'use_y': self.copy_rotation_axes[1],
-                    'use_z': self.copy_rotation_axes[2],
-                    'use_offset': True,
-                    'owner_space': 'LOCAL',
-                    'target_space': 'LOCAL'
-                })
+                self.make_constraint(
+                    b, 'COPY_ROTATION', tail_ctrl[i+1], influence=1.0,
+                    use_xyz=self.copy_rotation_axes, use_offset=True, space='LOCAL'
+                )
 
             b = bones['tail']['mch_tail']
-            self.make_constraint(b, {
-                'constraint': 'COPY_ROTATION',
-                'subtarget': bones['pivot']['ctrl'],
-                'influence': 1.0,
-            })
+            con = self.make_constraint(b, 'COPY_ROTATION', bones['pivot']['ctrl'], influence=1.0)
+
+            self.make_property(torso, 'tail_follow', default=0.0)
+            self.make_driver(con, 'influence', variables=[[torso, 'tail_follow']], polynomial=[1,-1])
+
 
         # MCH pivot
-        self.make_constraint(bones['pivot']['mch'], {
-            'constraint': 'COPY_TRANSFORMS',
-            'subtarget': bones['hips']['mch'][-1],
-            'owner_space': 'LOCAL',
-            'target_space': 'LOCAL'
-        })
+        self.make_constraint(bones['pivot']['mch'], 'COPY_TRANSFORMS', bones['hips']['mch'][-1], space='LOCAL')
 
         # DEF bones
         deform = bones['def']
@@ -702,28 +660,15 @@ class Rig:
         for d, t in zip(deform, tweaks):
             tidx = tweaks.index(t)
 
-            self.make_constraint(d, {
-                'constraint': 'COPY_TRANSFORMS',
-                'subtarget': t
-            })
+            self.make_constraint(d, 'COPY_TRANSFORMS', t)
 
             if tidx != len(tweaks) - 1:
                 if self.use_tail and t in bones['tail']['tweak']:
-                    self.make_constraint(d, {
-                        'constraint': 'DAMPED_TRACK',
-                        'subtarget': tweaks[tidx + 1],
-                        'track_axis': 'TRACK_NEGATIVE_Y'
-                    })
+                    self.make_constraint(d, 'DAMPED_TRACK', tweaks[tidx + 1], track_axis='-Y')
                 else:
-                    self.make_constraint(d, {
-                        'constraint': 'DAMPED_TRACK',
-                        'subtarget': tweaks[tidx + 1],
-                    })
+                    self.make_constraint(d, 'DAMPED_TRACK', tweaks[tidx + 1])
 
-                self.make_constraint(d, {
-                    'constraint': 'STRETCH_TO',
-                    'subtarget': tweaks[tidx + 1],
-                })
+                self.make_constraint(d, 'STRETCH_TO', tweaks[tidx + 1])
 
         pb = self.obj.pose.bones
 
@@ -740,67 +685,11 @@ class Rig:
         # make IK on neck ORGs
         if len(original_neck_bones) > 3:
             last_neck = original_neck_bones[-2]
-            self.make_constraint(last_neck, {
-                'constraint': 'IK',
-                'subtarget': bones['neck']['ctrl'],
-                'chain_count': len(original_neck_bones) - 1
-            })
+            self.make_constraint(last_neck, 'IK', bones['neck']['ctrl'], chain_count=len(original_neck_bones)-1)
 
             for b in original_neck_bones[:-1]:
                 pb[b].ik_stretch = 0.1
 
-    def create_drivers(self, bones):
-        bpy.ops.object.mode_set(mode='OBJECT')
-        pb = self.obj.pose.bones
-
-        # Setting the torso's props
-        torso = pb[bones['pivot']['ctrl']]
-
-        props = []
-        owners = []
-
-        if self.use_head:
-            props += ["head_follow"]
-            owners += [bones['neck']['mch_head']]
-            if bones['neck']['mch_neck']:
-                props += ["neck_follow"]
-                owners += [bones['neck']['mch_neck']]
-        if self.use_tail:
-            props += ["tail_follow"]
-            owners += [bones['tail']['mch_tail']]
-
-        for prop in props:
-            if prop == 'neck_follow':
-                torso[prop] = 0.5
-            else:
-                torso[prop] = 0.0
-
-            prop = rna_idprop_ui_prop_get(torso, prop, create=True)
-            prop["min"] = 0.0
-            prop["max"] = 1.0
-            prop["soft_min"] = 0.0
-            prop["soft_max"] = 1.0
-            prop["description"] = prop
-
-        # driving the follow rotation switches for neck and head
-        for bone, prop, in zip(owners, props):
-            # Add driver to copy rotation constraint
-            drv = pb[bone].constraints[0].driver_add("influence").driver
-            drv.type = 'AVERAGE'
-
-            var = drv.variables.new()
-            var.name = prop
-            var.type = "SINGLE_PROP"
-            var.targets[0].id = self.obj
-            var.targets[0].data_path = \
-                torso.path_from_id() + '[' + '"' + prop + '"' + ']'
-
-            drv_modifier = self.obj.animation_data.drivers[-1].modifiers[0]
-
-            drv_modifier.mode = 'POLYNOMIAL'
-            drv_modifier.poly_order = 1
-            drv_modifier.coefficients[0] = 1.0
-            drv_modifier.coefficients[1] = -1.0
 
     def locks_and_widgets(self, bones):
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -987,7 +876,6 @@ class Rig:
 
             self.parent_bones(bones)
             self.constrain_bones(bones)
-            self.create_drivers(bones)
             self.locks_and_widgets(bones)
 
         else:
