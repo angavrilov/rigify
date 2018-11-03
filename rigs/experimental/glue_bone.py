@@ -154,7 +154,7 @@ class Rig(BaseRig):
         make_constraints_from_string(owner_pb, target=self.obj, subtarget=subtarget,
                                      fstring="CT1.0WW")
 
-    def glue(self):
+    def do_glue(self):
         """
         Glue pass
         :return:
@@ -166,6 +166,11 @@ class Rig(BaseRig):
         elif self.glue_mode == "def_mediator":
             self.create_mch()
             self.make_def_mediation()
+
+    def glue(self, rigs):
+        bpy.ops.object.mode_set(mode='EDIT')
+        rig_new = self.__class__(self.obj, self.base_bone, self.params)
+        rig_new.do_glue()
 
     def generate(self):
         """

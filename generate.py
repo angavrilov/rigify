@@ -449,6 +449,13 @@ def generate_rig(context, metarig):
         if obj.data.bones[bone].name.startswith(DEF_PREFIX):
             obj.data.bones[bone].layers = DEF_LAYER
 
+    # Do final gluing
+    for rig in rigs:
+        if hasattr(rig, "glue"):
+            rig.glue(rigs)
+
+    t.tick("Glue pass")
+
     # Create root bone widget
     create_root_widget(obj, "root")
 
@@ -542,16 +549,6 @@ def generate_rig(context, metarig):
         bpy.ops.logic.controller_add(type='PYTHON', object=obj.name)
         ctrl = obj.game.controllers[-1]
         ctrl.text = bpy.data.texts[script.name]
-
-    # Do final gluing
-    for rig in rigs:
-        if hasattr(rig, "glue"):
-            # update glue_bone rigs
-            bpy.ops.object.mode_set(mode='EDIT')
-            rig = rig.__class__(rig.obj, rig.base_bone, rig.params)
-
-            rig.glue()
-    t.tick("Glue pass")
 
     t.tick("The rest: ")
     #----------------------------------
