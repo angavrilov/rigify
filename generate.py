@@ -302,6 +302,8 @@ def generate_rig(context, metarig):
     rna_idprop_ui_prop_get(obj.data, "rig_id", create=True)
     obj.data["rig_id"] = rig_id
 
+    t.tick("Create root bone: ")
+
     # Create/find widge collection
     widget_collection = ensure_widget_collection(context)
 
@@ -332,8 +334,6 @@ def generate_rig(context, metarig):
         t.tick("Initialize rigs: ")
 
         # Generate all the rigs.
-        armature_store = context.armature
-
         ui_scripts = []
         ui_imports = rig_ui_template.UI_IMPORTS.copy()
         ui_utilities = rig_ui_template.UI_UTILITIES.copy()

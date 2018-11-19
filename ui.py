@@ -110,8 +110,6 @@ class DATA_PT_rigify_buttons(bpy.types.Panel):
             row = layout.row()
             # Rig type field
 
-            armature_id_store = C.object.data
-
             col = layout.column(align=True)
             col.active = (not 'rig_id' in C.object.data)
 
@@ -625,7 +623,6 @@ class BONE_PT_rigify_buttons(bpy.types.Panel):
 
 class VIEW3D_PT_tools_rigify_dev(bpy.types.Panel):
     bl_label = "Rigify Dev Tools"
-    bl_category = 'Tools'
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'View'

@@ -483,9 +483,18 @@ def register():
 def unregister():
     from bpy.utils import unregister_class
 
-    # Properties.
+    # Properties on PoseBones and Armature.
     del bpy.types.PoseBone.rigify_type
     del bpy.types.PoseBone.rigify_parameters
+
+    ArmStore = bpy.types.Armature
+    del ArmStore.rigify_layers
+    del ArmStore.active_feature_set
+    del ArmStore.rigify_colors
+    del ArmStore.rigify_selection_colors
+    del ArmStore.rigify_colors_index
+    del ArmStore.rigify_colors_lock
+    del ArmStore.rigify_theme_to_add
 
     IDStore = bpy.types.WindowManager
     del IDStore.rigify_collection

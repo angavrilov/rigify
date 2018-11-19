@@ -59,7 +59,6 @@ def create_widget(rig, bone_name, bone_transform_name=None):
     obj_name = WGT_PREFIX + rig.name + '_' + bone_name
     scene = bpy.context.scene
     collection = bpy.context.collection
-    id_store = bpy.context.window_manager
 
     # Check if it already exists in the scene
     if obj_name in scene.objects:

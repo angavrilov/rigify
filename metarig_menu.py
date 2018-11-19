@@ -19,7 +19,6 @@
 # <pep8 compliant>
 
 import os
-import sys
 from string import capwords
 
 import bpy
