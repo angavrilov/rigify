@@ -258,7 +258,17 @@ class RigifyParameters(bpy.types.PropertyGroup):
     name = bpy.props.StringProperty()
 
 
+# Remember the initial property set
+RIGIFY_PARAMETERS_BASE_DIR = set(dir(RigifyParameters))
+
 RIGIFY_PARAMETER_TABLE = {'name': ('DEFAULT', bpy.props.StringProperty())}
+
+def clear_rigify_parameters():
+    for name in list(dir(RigifyParameters)):
+        if name not in RIGIFY_PARAMETERS_BASE_DIR:
+            delattr(RigifyParameters, name)
+            if name in RIGIFY_PARAMETER_TABLE:
+                del RIGIFY_PARAMETER_TABLE[name]
 
 
 def format_property_spec(spec):
@@ -488,6 +498,9 @@ def unregister():
     if "bl_rna" in RigifyPreferences.__dict__:
         bpy.utils.unregister_class(RigifyPreferences)
 
+    clear_rigify_parameters()
+
+    # Sub-modules.
     metarig_menu.unregister()
     ui.unregister()
     feature_sets.unregister()
