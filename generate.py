@@ -29,7 +29,7 @@ from collections import OrderedDict
 from .utils import MetarigError, new_bone
 from .utils import MCH_PREFIX, DEF_PREFIX, WGT_PREFIX, ROOT_NAME, make_original_name
 from .utils import create_root_widget
-from .utils.widgets import ensure_widget_collection
+from .utils.collections import ensure_widget_collection
 from .utils import random_id
 from .utils import copy_attributes
 from .utils import gamma_correct
