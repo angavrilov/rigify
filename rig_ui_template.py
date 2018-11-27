@@ -18,6 +18,16 @@
 
 # <pep8 compliant>
 
+import bpy
+
+from collections import OrderedDict
+
+from .utils.layers import get_layers
+from .utils.rig import attach_persistent_script
+
+from . import base_generate
+
+
 UI_IMPORTS = [
     'import bpy',
     'import math',
@@ -842,17 +852,15 @@ class RigUI(bpy.types.Panel):
         layout = self.layout
         pose_bones = context.active_object.pose.bones
         try:
-            selected_bones = [bone.name for bone in context.selected_pose_bones]
-            selected_bones += [context.active_pose_bone.name]
+            selected_bones = set(bone.name for bone in context.selected_pose_bones)
+            selected_bones.add(context.active_pose_bone.name)
         except (AttributeError, TypeError):
             return
 
         def is_selected(names):
             # Returns whether any of the named bones are selected.
-            if type(names) == list:
-                for name in names:
-                    if name in selected_bones:
-                        return True
+            if isinstance(names, list) or isinstance(names, set):
+                return not selected_bones.isdisjoint(names)
             elif names in selected_bones:
                 return True
             return False
@@ -912,3 +920,159 @@ class RigLayers(bpy.types.Panel):
     code += "        row.prop(context.active_object.data, 'layers', index=28, toggle=True, text='Root')\n"
 
     return code
+
+
+class ScriptGenerator(base_generate.GeneratorPlugin):
+    """Generator plugin that builds the python script attached to the rig."""
+
+    priority = -100
+
+    def __init__(self, generator):
+        super(ScriptGenerator, self).__init__(generator)
+
+        self.ui_scripts = []
+        self.ui_imports = UI_IMPORTS.copy()
+        self.ui_utilities = UI_UTILITIES.copy()
+        self.ui_register = UI_REGISTER.copy()
+        self.ui_register_drivers = []
+        self.ui_register_props = []
+
+        self.cur_selected_set = None
+
+    # Structured panel code generation
+    def add_panel_selected_check(self, controls):
+        """Add a check that one of the listed bones are selected."""
+        selected_set = set(controls)
+        if selected_set != self.cur_selected_set:
+            self.cur_selected_set = selected_set
+            self.ui_scripts.append(
+                "if is_selected(%r):" % (selected_set)
+            )
+
+    def add_panel_custom_prop(self, bone_name, prop_name, **params):
+        """Add a custom property input field to the panel."""
+        assert(self.cur_selected_set is not None)
+        param_list = ["%s=%r" % (k, v) for k, v in params.items()]
+        param_str = ', '.join(["""'["%s"]'""" % prop_name, *param_list])
+        self.ui_scripts.append(
+            "    layout.prop(pose_bones[%r], %s)" % (bone_name, param_str)
+        )
+
+    def add_panel_operator(self, operator_name, properties=None, **params):
+        """Add an operator call button to the panel."""
+        assert(self.cur_selected_set is not None)
+        param_list = ["%s=%r" % (k, v) for k, v in params.items()]
+        param_str = ', '.join([repr(operator_name), *param_list])
+        call_str = "layout.operator(%s)" % (param_str)
+        if properties:
+            assign_lines = ["    props.%s = %r" % (k,v) for k,v in properties.items()]
+            self.ui_scripts.append(
+                '\n'.join(["    props = " + call_str] + assign_lines)
+            )
+        else:
+            self.ui_scripts.append("    " + call_str)
+
+    # Raw output
+    def add_panel_code(self, str_list):
+        """Add raw code to the panel."""
+        self.cur_selected_set = None
+        self.ui_scripts += str_list
+
+    def add_imports(self, str_list):
+        self.ui_imports += str_list
+
+    def add_utilities(self, str_list):
+        self.ui_utilities += str_list
+
+    def register_classes(self, str_list):
+        self.ui_register += str_list
+
+    def register_driver_functions(self, str_list):
+        self.ui_register_drivers += str_list
+
+    def register_property(self, name, definition):
+        self.ui_register_props.append((name, definition))
+
+    def finalize(self):
+        metarig = self.generator.metarig
+        id_store = self.generator.id_store
+        rig_id = self.generator.rig_id
+
+        vis_layers = self.obj.data.layers
+
+        # Ensure the collection of layer names exists
+        for i in range(1 + len(metarig.data.rigify_layers), 29):
+            metarig.data.rigify_layers.add()
+
+        # Create list of layer name/row pairs
+        layer_layout = []
+        for l in metarig.data.rigify_layers:
+            layer_layout += [(l.name, l.row)]
+
+        # Generate the UI script
+        if id_store.rigify_generate_mode == 'overwrite':
+            rig_ui_name = id_store.rigify_rig_ui or 'rig_ui.py'
+        else:
+            rig_ui_name = 'rig_ui.py'
+
+        if id_store.rigify_generate_mode == 'overwrite' and rig_ui_name in bpy.data.texts.keys():
+            script = bpy.data.texts[rig_ui_name]
+            script.clear()
+        else:
+            script = bpy.data.texts.new("rig_ui.py")
+
+        rig_ui_old_name = ""
+        if id_store.rigify_rig_basename:
+            rig_ui_old_name = script.name
+            script.name = id_store.rigify_rig_basename + "_rig_ui.py"
+
+        id_store.rigify_rig_ui = script.name
+
+        for s in OrderedDict.fromkeys(self.ui_imports):
+            script.write(s + "\n")
+
+        script.write(UI_BASE_UTILITIES % rig_id)
+
+        for s in OrderedDict.fromkeys(self.ui_utilities):
+            script.write(s + "\n")
+
+        script.write(UI_SLIDERS)
+
+        for s in self.ui_scripts:
+            script.write("\n        " + s.replace("\n", "\n        ") + "\n")
+
+        script.write(layers_ui(vis_layers, layer_layout))
+
+        script.write("\ndef register():\n")
+
+        ui_register = OrderedDict.fromkeys(self.ui_register)
+        for s in ui_register:
+            script.write("    bpy.utils.register_class("+s+");\n")
+
+        ui_register_drivers = OrderedDict.fromkeys(self.ui_register_drivers)
+        for s in ui_register_drivers:
+            script.write("    bpy.app.driver_namespace['"+s+"'] = "+s+"\n")
+
+        ui_register_props = OrderedDict.fromkeys(self.ui_register_props)
+        for s in ui_register_props:
+            script.write("    bpy.types.%s = %s\n " % (*s,))
+
+        script.write("\ndef unregister():\n")
+
+        for s in ui_register_props:
+            script.write("    del bpy.types.%s\n" % s[0])
+
+        for s in ui_register:
+            script.write("    bpy.utils.unregister_class("+s+");\n")
+
+        for s in ui_register_drivers:
+            script.write("    del bpy.app.driver_namespace['"+s+"']\n")
+
+        script.write("\nregister()\n")
+        script.use_module = True
+
+        # Run UI script
+        exec(script.as_string(), {})
+
+        # Attach the script to the rig
+        attach_persistent_script(self.obj, script)

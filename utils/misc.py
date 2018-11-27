@@ -19,7 +19,11 @@
 # <pep8 compliant>
 
 import math
+import collections
+
+from itertools import tee
 from mathutils import Vector, Matrix, Color
+
 
 #=============================================
 # Math
@@ -82,6 +86,28 @@ def gamma_correct(color):
 
 
 #=============================================
+# Iterators
+#=============================================
+
+
+def pairwise(iterable):
+    "s -> (s0,s1), (s1,s2), (s2,s3), ..."
+    a, b = tee(iterable)
+    next(b, None)
+    return zip(a, b)
+
+
+def map_list(func, *inputs):
+    "[func(a0,b0...), func(a1,b1...), ...]"
+    return list(map(func, *inputs))
+
+
+def map_apply(func, *inputs):
+    "Apply the function to inputs like map for side effects, discarding results."
+    collections.deque(map(func, *inputs), maxlen=0)
+
+
+#=============================================
 # Misc
 #=============================================
 
@@ -98,3 +124,14 @@ def copy_attributes(a, b):
                 setattr(b, key, getattr(a, key))
             except AttributeError:
                 pass
+
+
+def select_object(context, object, deselect_all=False):
+    scene = context.scene
+
+    if deselect_all:
+        for objt in scene.objects:
+            objt.select = False  # deselect all objects
+
+    object.select = True
+    scene.objects.active = object

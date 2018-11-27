@@ -113,6 +113,19 @@ def get_metarig_module(metarig_name, path=METARIG_DIR):
     return submod
 
 
+def attach_persistent_script(obj, script):
+    # Add rig_ui to logic
+    ctrls = obj.game.controllers
+
+    for c in ctrls:
+        if 'Python' in c.name and c.text.name == script.name:
+            return
+
+    bpy.ops.logic.controller_add(type='PYTHON', object=obj.name)
+    ctrl = obj.game.controllers[-1]
+    ctrl.text = bpy.data.texts[script.name]
+
+
 def connected_children_names(obj, bone_name):
     """ Returns a list of bone names (in order) of the bones that form a single
         connected chain starting with the given bone as a parent.
