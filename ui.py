@@ -29,6 +29,8 @@ from .utils import upgradeMetarigTypes, outdated_types
 from .utils import get_keyed_frames, bones_in_frame
 from .utils import overwrite_prop_animation
 from .rigs.utils import get_limb_generated_names
+
+from . import base_rig
 from . import rig_lists
 from . import generate
 from . import rot_mode
@@ -603,6 +605,8 @@ class BONE_PT_rigify_buttons(bpy.types.Panel):
                 box = row.box()
                 box.label(text="ALERT: type \"%s\" does not exist!" % rig_name)
             else:
+                if issubclass(rig.Rig, base_rig.BaseRig):
+                    rig = rig.Rig
                 try:
                     rig.parameters_ui
                 except AttributeError:
@@ -790,7 +794,7 @@ class Sample(bpy.types.Operator):
 
     bl_idname = "armature.metarig_sample_add"
     bl_label = "Add a sample metarig for a rig type"
-    bl_options = {'UNDO'}
+    bl_options = {'UNDO', 'REGISTER'}
 
     metarig_type = StringProperty(
             name="Type",

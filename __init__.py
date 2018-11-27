@@ -32,14 +32,17 @@ bl_info = {
 
 if "bpy" in locals():
     import importlib
+    importlib.reload(utils)
+    importlib.reload(base_rig)
+    importlib.reload(base_generate)
+    importlib.reload(rig_ui_template)
+    importlib.reload(rig_lists)
     importlib.reload(generate)
     importlib.reload(ui)
-    importlib.reload(utils)
     importlib.reload(metarig_menu)
-    importlib.reload(rig_lists)
     importlib.reload(feature_sets)
 else:
-    from . import (utils, rig_lists, generate, ui, metarig_menu, feature_sets)
+    from . import (utils, base_rig, base_generate, rig_ui_template, rig_lists, generate, ui, metarig_menu, feature_sets)
 
 import bpy
 import sys
@@ -449,7 +452,9 @@ def register():
                 pass
     else:
         for rig in rig_lists.rigs:
-            r = rig_lists.rigs[rig]['module']
+            rig_module = rig_lists.rigs[rig]['module']
+            rig_class = rig_module.Rig
+            r = rig_class if issubclass(rig_class, base_rig.BaseRig) else rig_module
             try:
                 r.add_parameters(RigifyParameterValidator(RigifyParameters, rig, RIGIFY_PARAMETER_TABLE))
             except AttributeError:
