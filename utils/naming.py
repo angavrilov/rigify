@@ -31,6 +31,9 @@ ROOT_NAME = "root"   # Name of the root bone.
 # Name manipulation
 #=======================================================================
 
+def get_name(bone):
+    return bone.name if bone else None
+
 
 def strip_trailing_number(s):
     m = re.search(r'\.(\d{3})$', s)
