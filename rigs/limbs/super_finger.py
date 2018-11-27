@@ -1,304 +1,224 @@
 import bpy
-from ...utils import copy_bone, flip_bone
-from ...utils import strip_org, make_deformer_name, connected_children_names, make_mechanism_name
-from ...utils import create_circle_widget, create_widget
-from ...utils import MetarigError, align_bone_x_axis
-from rna_prop_ui import rna_idprop_ui_prop_get
+import re
 
-script = """
-controls    = [%s]
-master_name = '%s'
-if is_selected(controls):
-    layout.prop(pose_bones[master_name], '["%s"]', text="Curvature", slider=True)
-"""
+from itertools import count, repeat
+
+from ...utils.errors import MetarigError
+from ...utils.rig import connected_children_names
+from ...utils.bones import flip_bone, align_chain_x_axis
+from ...utils.naming import strip_org, make_mechanism_name, make_deformer_name
+from ...utils.widgets import create_widget
+from ...utils.widgets_basic import create_circle_widget
+from ...utils.misc import map_list, map_apply
+
+from ..chain_rigs import SimpleChainRig
 
 
-class Rig:
+class Rig(SimpleChainRig):
+    """A finger rig with master control."""
+    def initialize(self):
+        super(Rig,self).initialize()
 
-    def __init__(self, obj, bone_name, params):
-        self.obj = obj
-        self.org_bones = [bone_name] + connected_children_names(obj, bone_name)
-        self.params = params
+        self.bbone_segments = 8
+        self.first_parent = self.get_bone_parent(self.bones.org[0])
 
-        if len(self.org_bones) <= 1:
-            raise MetarigError("RIGIFY ERROR: Bone '%s': listen bro, that finger rig jusaint put tugetha rite. A little hint, use more than one bone!!" % (strip_org(bone_name)))
-
-    def orient_org_bones(self):
-
-        bpy.ops.object.mode_set(mode='EDIT')
-        eb = self.obj.data.edit_bones
-
+    def prepare_bones(self):
         if self.params.primary_rotation_axis == 'automatic':
+            align_chain_x_axis(self.obj, self.bones.org)
 
-            first_bone = eb[self.org_bones[0]]
-            last_bone = eb[self.org_bones[-1]]
+    ###############
+    # GENERATE
 
-            # Orient uarm farm bones
-            chain_y_axis = last_bone.tail - first_bone.head
-            chain_rot_axis = first_bone.y_axis.cross(chain_y_axis)  # ik-plane normal axis (rotation)
-            if chain_rot_axis.length < first_bone.length/100:
-                chain_rot_axis = first_bone.x_axis.normalized()
-            else:
-                chain_rot_axis = chain_rot_axis.normalized()
+    def generate_bones(self):
+        self.make_master_control_bone()
+        self.make_control_chain()
+        self.make_mch_bend_chain()
+        self.make_mch_stretch_chain()
+        self.make_deform_chain()
 
-            for bone in self.org_bones:
-                align_bone_x_axis(self.obj, bone, chain_rot_axis)
+    # Master control:
+    def make_master_control_bone(self):
+        orgs = self.bones.org
+        name = self.copy_bone(orgs[0], self.master_control_name(orgs[0]), parent=True)
+        self.bones.ctrl.master = name
 
-    def generate(self):
-        org_bones = self.org_bones
+        first_bone = self.get_bone(orgs[0])
+        last_bone = self.get_bone(orgs[-1])
+        self.get_bone(name).tail += (last_bone.tail - first_bone.head) * 1.25
 
-        bpy.ops.object.mode_set(mode='EDIT')
-        eb = self.obj.data.edit_bones
+    def master_control_name(self, org_name):
+        # Compute master bone name: inherit .LR suffix, but strip trailing digits
+        name_parts = re.match(r'^(.*?)(?:([._-])?\d+)?((?:[._-][LlRr])?)(?:\.\d+)?$', strip_org(org_name))
+        name_base, name_sep, name_suffix = name_parts.groups()
+        name_base += name_sep if name_sep else '_'
+        return name_base + 'master' + name_suffix
 
-        self.orient_org_bones()
+    # Detail control:
+    def make_control_chain(self):
+        orgs = self.bones.org
+        self.bones.ctrl.main = map_list(self.make_control_bone, orgs)
+        self.bones.ctrl.main += [self.make_tip_control_bone(orgs[-1], orgs[0])]
 
-        # Bone name lists
-        ctrl_chain = []
-        def_chain = []
-        mch_chain = []
-        mch_drv_chain = []
+    def make_control_bone(self, org):
+        return self.copy_bone(org, strip_org(org), parent=False)
 
-        # Create ctrl master bone
-        org_name = self.org_bones[0]
-        temp_name = strip_org(self.org_bones[0])
+    def make_tip_control_bone(self, org, name_org):
+        name = self.copy_bone(org, strip_org(name_org), parent=False)
 
-        if temp_name[-2:] == '.L' or temp_name[-2:] == '.R':
-            suffix = temp_name[-2:]
-            master_name = temp_name[:-2] + "_master" + suffix
+        flip_bone(self.obj, name)
+        self.get_bone(name).length /= 2
+
+        return name
+    # MCH:
+    def make_mch_bend_chain(self):
+        self.bones.mch.bend = map_list(self.make_mch_bend_bone, self.bones.org)
+
+    def make_mch_bend_bone(self, org):
+        return self.copy_bone(org, make_mechanism_name(strip_org(org)) + "_drv", parent=False)
+
+    def make_mch_stretch_chain(self):
+        self.bones.mch.stretch = map_list(self.make_mch_stretch_bone, self.bones.org)
+
+    def make_mch_stretch_bone(self, org):
+        return self.copy_bone(org, make_mechanism_name(strip_org(org)), parent=False)
+
+    ###############
+    # PARENT
+
+    def parent_bones(self):
+        self.parent_control_chain()
+        self.parent_mch_bend_chain()
+        self.parent_mch_stretch_chain()
+        self.parent_deform_chain()
+
+    def parent_control_chain(self):
+        ctrls = self.bones.ctrl.main
+        map_apply(self.set_bone_parent, ctrls, self.bones.mch.bend + ctrls[-2:])
+
+    def parent_mch_bend_chain(self):
+        ctrls = self.bones.ctrl.main
+        map_apply(self.set_bone_parent, self.bones.mch.bend, [self.first_parent] + ctrls)
+
+    def parent_mch_stretch_chain(self):
+        ctrls = self.bones.ctrl.main
+        map_apply(self.set_bone_parent, self.bones.mch.stretch, [self.first_parent] + ctrls[1:])
+
+    ###############
+    # CONFIGURE
+
+    def configure_bones(self):
+        self.configure_master_control_bone()
+        self.configure_control_chain()
+
+    def configure_master_control_bone(self):
+        master = self.bones.ctrl.master
+
+        bone = self.get_bone(master)
+        bone.lock_scale = True, False, True
+
+        self.make_property(master, 'finger_curve', description="Rubber hose finger cartoon effect")
+
+        # Create UI
+        self.script.add_panel_selected_check(self.bones.ctrl.flatten())
+        self.script.add_panel_custom_prop(master, 'finger_curve', text="Curvature", slider=True)
+
+    def configure_control_chain(self):
+        map_apply(self.configure_control_bone, self.bones.org + [None], self.bones.ctrl.main)
+
+    def configure_control_bone(self, org, ctrl):
+        if org:
+            self.copy_bone_properties(org, ctrl)
         else:
-            master_name = temp_name + "_master"
-        master_name = copy_bone(self.obj, org_name, master_name)
-        ctrl_bone_master = eb[master_name]
+            bone = self.get_bone(ctrl)
+            bone.lock_rotation_w = True
+            bone.lock_rotation = (True, True, True)
+            bone.lock_scale = (True, True, True)
 
-        # Parenting bug fix ??
-        ctrl_bone_master.use_connect = False
-        ctrl_bone_master.parent = None
+    ###############
+    # RIG
 
-        ctrl_bone_master.tail += (eb[org_bones[-1]].tail - eb[org_name].head) * 1.25
+    def rig_bones(self):
+        self.rig_mch_bend_chain()
+        self.rig_mch_stretch_chain()
+        self.rig_org_chain()
+        self.rig_deform_chain()
 
-        for bone in org_bones:
-            eb[bone].use_connect = False
-            if org_bones.index(bone) != 0:
-                eb[bone].parent = None
+    # Match axis to expression
+    axis_options = {
+        "automatic": {"axis": 0,
+                      "expr": '(1-sy)*pi'},
+        "X": {"axis": 0,
+              "expr": '(1-sy)*pi'},
+        "-X": {"axis": 0,
+               "expr": '-((1-sy)*pi)'},
+        "Y": {"axis": 1,
+              "expr": '(1-sy)*pi'},
+        "-Y": {"axis": 1,
+               "expr": '-((1-sy)*pi)'},
+        "Z": {"axis": 2,
+              "expr": '(1-sy)*pi'},
+        "-Z": {"axis": 2,
+               "expr": '-((1-sy)*pi)'}
+    }
 
-        # Creating the bone chains
-        for i in range(len(self.org_bones)):
+    # MCH:
+    def rig_mch_bend_chain(self):
+        map_apply(self.rig_mch_bend_bone, count(0), self.bones.mch.bend)
 
-            name = self.org_bones[i]
-            ctrl_name = strip_org(name)
+    def rig_mch_bend_bone(self, i, mch):
+        master = self.bones.ctrl.master
+        if i == 0:
+            self.make_constraint(mch, 'COPY_LOCATION', master)
+            self.make_constraint(mch, 'COPY_ROTATION', master, space='LOCAL')
+        else:
+            axis = self.params.primary_rotation_axis
+            options = self.axis_options[axis]
 
-            # Create control bones
-            ctrl_bone = copy_bone(self.obj, name, ctrl_name)
-            ctrl_bone_e = eb[ctrl_name]
+            bone = self.get_bone(mch)
+            bone.rotation_mode = 'YZX'
 
-            # Create deformation bones
-            def_name = make_deformer_name(ctrl_name)
-            def_bone = copy_bone(self.obj, name, def_name)
+            self.make_driver(
+                bone, 'rotation_euler', index=options['axis'],
+                expression=options['expr'],
+                variables={'sy': (master, '.scale.y')}
+            )
 
-            # Create mechanism bones
-            mch_name = make_mechanism_name(ctrl_name)
-            mch_bone = copy_bone(self.obj, name, mch_name)
+    def rig_mch_stretch_chain(self):
+        ctrls = self.bones.ctrl.main
+        map_apply(self.rig_mch_stretch_bone, count(0), self.bones.mch.stretch, ctrls, ctrls[1:])
 
-            # Create mechanism driver bones
-            drv_name = make_mechanism_name(ctrl_name) + "_drv"
-            mch_bone_drv = copy_bone(self.obj, name, drv_name)
+    def rig_mch_stretch_bone(self, i, mch, ctrl, ctrl_next):
+        if i == 0:
+            self.make_constraint(mch, 'COPY_LOCATION', ctrl)
+            self.make_constraint(mch, 'COPY_SCALE', ctrl)
 
-            # Adding to lists
-            ctrl_chain += [ctrl_bone]
-            def_chain += [def_bone]
-            mch_chain += [mch_bone]
-            mch_drv_chain += [mch_bone_drv]
+        self.make_constraint(mch, 'DAMPED_TRACK', ctrl_next)
+        self.make_constraint(mch, 'STRETCH_TO', ctrl_next, volume='NO_VOLUME')
 
-        # Restoring org chain parenting
-        for bone in org_bones[1:]:
-            eb[bone].parent = eb[org_bones[org_bones.index(bone) - 1]]
+    # ORG:
+    def rig_org_chain(self):
+        map_apply(self.rig_org_bone, self.bones.org, self.bones.mch.stretch)
 
-        # Parenting the master bone to the first org
-        ctrl_bone_master = eb[master_name]
-        ctrl_bone_master.parent = eb[org_bones[0]]
+    # DEF:
+    def rig_deform_bone(self, org, deform):
+        master = self.bones.ctrl.master
+        bone = self.get_bone(deform)
 
-        # Parenting chain bones
-        for i in range(len(self.org_bones)):
-            # Edit bone references
-            def_bone_e = eb[def_chain[i]]
-            ctrl_bone_e = eb[ctrl_chain[i]]
-            mch_bone_e = eb[mch_chain[i]]
-            mch_bone_drv_e = eb[mch_drv_chain[i]]
+        self.make_constraint(deform, 'COPY_TRANSFORMS', org)
 
-            if i == 0:
-                # First ctl bone
-                ctrl_bone_e.parent = mch_bone_drv_e
-                ctrl_bone_e.use_connect = False
-                # First def bone
-                def_bone_e.parent = eb[self.org_bones[i]].parent
-                def_bone_e.use_connect = False
-                # First mch bone
-                mch_bone_e.parent = eb[self.org_bones[i]].parent
-                mch_bone_e.use_connect = False
-                # First mch driver bone
-                mch_bone_drv_e.parent = eb[self.org_bones[i]].parent
-                mch_bone_drv_e.use_connect = False
-            else:
-                # The rest
-                ctrl_bone_e.parent = mch_bone_drv_e
-                ctrl_bone_e.use_connect = False
+        self.make_driver(bone.bone, 'bbone_in', variables=[(master, 'finger_curve')])
+        self.make_driver(bone.bone, 'bbone_out', variables=[(master, 'finger_curve')])
 
-                def_bone_e.parent = eb[def_chain[i-1]]
-                def_bone_e.use_connect = True
+    ###############
+    # WIDGETS
 
-                mch_bone_drv_e.parent = eb[ctrl_chain[i-1]]
-                mch_bone_drv_e.use_connect = False
+    def generate_widgets(self):
+        self.make_master_control_widget()
+        self.make_control_widgets()
 
-                # Parenting mch bone
-                mch_bone_e.parent = ctrl_bone_e
-                mch_bone_e.use_connect = False
+    def make_master_control_widget(self):
+        master_name = self.bones.ctrl.master
 
-        # Creating tip control bone
-        tip_name = copy_bone(self.obj, org_bones[-1], temp_name)
-        ctrl_bone_tip = eb[tip_name]
-        flip_bone(self.obj, tip_name)
-        ctrl_bone_tip.length /= 2
-
-        ctrl_bone_tip.parent = eb[ctrl_chain[-1]]
-
-        bpy.ops.object.mode_set(mode='OBJECT')
-
-        pb = self.obj.pose.bones
-
-        # Setting pose bones locks
-        pb_master = pb[master_name]
-        pb_master.lock_scale = True, False, True
-
-        pb[tip_name].lock_scale = True, True, True
-        pb[tip_name].lock_rotation = True, True, True
-        pb[tip_name].lock_rotation_w = True
-
-        pb_master['finger_curve'] = 0.0
-        prop = rna_idprop_ui_prop_get(pb_master, 'finger_curve')
-        prop["min"] = 0.0
-        prop["max"] = 1.0
-        prop["soft_min"] = 0.0
-        prop["soft_max"] = 1.0
-        prop["description"] = "Rubber hose finger cartoon effect"
-
-        # Pose settings
-        for org, ctrl, deform, mch, mch_drv in zip(self.org_bones, ctrl_chain, def_chain, mch_chain, mch_drv_chain):
-
-            # Constraining the deform bones
-            con = pb[deform].constraints.new('COPY_TRANSFORMS')
-            con.target = self.obj
-            con.subtarget = mch
-
-            # Constraining the mch bones
-            if mch_chain.index(mch) == 0:
-                con = pb[mch].constraints.new('COPY_LOCATION')
-                con.target = self.obj
-                con.subtarget = ctrl
-
-                con = pb[mch].constraints.new('COPY_SCALE')
-                con.target = self.obj
-                con.subtarget = ctrl
-
-                con = pb[mch].constraints.new('DAMPED_TRACK')
-                con.target = self.obj
-                con.subtarget = ctrl_chain[ctrl_chain.index(ctrl)+1]
-
-                con = pb[mch].constraints.new('STRETCH_TO')
-                con.target = self.obj
-                con.subtarget = ctrl_chain[ctrl_chain.index(ctrl)+1]
-                con.volume = 'NO_VOLUME'
-
-            elif mch_chain.index(mch) == len(mch_chain) - 1:
-                con = pb[mch].constraints.new('DAMPED_TRACK')
-                con.target = self.obj
-                con.subtarget = tip_name
-
-                con = pb[mch].constraints.new('STRETCH_TO')
-                con.target = self.obj
-                con.subtarget = tip_name
-                con.volume = 'NO_VOLUME'
-            else:
-                con = pb[mch].constraints.new('DAMPED_TRACK')
-                con.target = self.obj
-                con.subtarget = ctrl_chain[ctrl_chain.index(ctrl)+1]
-
-                con = pb[mch].constraints.new('STRETCH_TO')
-                con.target = self.obj
-                con.subtarget = ctrl_chain[ctrl_chain.index(ctrl)+1]
-                con.volume = 'NO_VOLUME'
-
-            # Constraining and driving mch driver bones
-            pb[mch_drv].rotation_mode = 'YZX'
-
-            if mch_drv_chain.index(mch_drv) == 0:
-                # Constraining to master bone
-                con = pb[mch_drv].constraints.new('COPY_LOCATION')
-                con.target = self.obj
-                con.subtarget = master_name
-
-                con = pb[mch_drv].constraints.new('COPY_ROTATION')
-                con.target = self.obj
-                con.subtarget = master_name
-                con.target_space = 'LOCAL'
-                con.owner_space = 'LOCAL'
-
-            else:
-                # Match axis to expression
-                options = {
-                    "automatic": {"axis": 0,
-                                  "expr": '(1-sy)*pi'},
-                    "X": {"axis": 0,
-                          "expr": '(1-sy)*pi'},
-                    "-X": {"axis": 0,
-                           "expr": '-((1-sy)*pi)'},
-                    "Y": {"axis": 1,
-                          "expr": '(1-sy)*pi'},
-                    "-Y": {"axis": 1,
-                           "expr": '-((1-sy)*pi)'},
-                    "Z": {"axis": 2,
-                          "expr": '(1-sy)*pi'},
-                    "-Z": {"axis": 2,
-                           "expr": '-((1-sy)*pi)'}
-                }
-
-                axis = self.params.primary_rotation_axis
-
-                # Drivers
-                drv = pb[mch_drv].driver_add("rotation_euler", options[axis]["axis"]).driver
-                drv.type = 'SCRIPTED'
-                drv.expression = options[axis]["expr"]
-                drv_var = drv.variables.new()
-                drv_var.name = 'sy'
-                drv_var.type = "SINGLE_PROP"
-                drv_var.targets[0].id = self.obj
-                drv_var.targets[0].data_path = pb[master_name].path_from_id() + '.scale.y'
-
-            # Setting bone curvature setting, custom property, and drivers
-            def_bone = self.obj.data.bones[deform]
-
-            def_bone.bbone_segments = 8
-            drv = def_bone.driver_add("bbone_in").driver    # Ease in
-
-            drv.type='SUM'
-            drv_var = drv.variables.new()
-            drv_var.name = "curvature"
-            drv_var.type = "SINGLE_PROP"
-            drv_var.targets[0].id = self.obj
-            drv_var.targets[0].data_path = pb_master.path_from_id() + '["finger_curve"]'
-
-            drv = def_bone.driver_add("bbone_out").driver   # Ease out
-
-            drv.type='SUM'
-            drv_var = drv.variables.new()
-            drv_var.name = "curvature"
-            drv_var.type = "SINGLE_PROP"
-            drv_var.targets[0].id = self.obj
-            drv_var.targets[0].data_path = pb_master.path_from_id() + '["finger_curve"]'
-
-            # Assigning shapes to control bones
-            create_circle_widget(self.obj, ctrl, radius=0.3, head_tail=0.5)
-
-        # Create ctrl master widget
         w = create_widget(self.obj, master_name)
         if w is not None:
             mesh = w.data
@@ -313,31 +233,30 @@ class Rig:
             mesh.from_pydata(verts, edges, [])
             mesh.update()
 
-        # Create tip control widget
-        create_circle_widget(self.obj, tip_name, radius=0.3, head_tail=0.0)
-
-        # Create UI
-        controls_string = ", ".join(
-            ["'" + x + "'" for x in ctrl_chain]
-            ) + ", " + "'" + master_name + "'"
-        return [script % (controls_string, master_name, 'finger_curve')]
+    def make_control_widget(self, ctrl):
+        if ctrl == self.bones.ctrl.main[-1]:
+            # Tip control
+            create_circle_widget(self.obj, ctrl, radius=0.3, head_tail=0.0)
+        else:
+            create_circle_widget(self.obj, ctrl, radius=0.3, head_tail=0.5)
 
 
-def add_parameters(params):
-    """ Add the parameters of this rig type to the
-        RigifyParameters PropertyGroup
-    """
-    items = [('automatic', 'Automatic', ''), ('X', 'X manual', ''), ('Y', 'Y manual', ''), ('Z', 'Z manual', ''),
-             ('-X', '-X manual', ''), ('-Y', '-Y manual', ''), ('-Z', '-Z manual', '')]
-    params.primary_rotation_axis = bpy.props.EnumProperty(items=items, name="Primary Rotation Axis", default='automatic')
+    @classmethod
+    def add_parameters(self, params):
+        """ Add the parameters of this rig type to the
+            RigifyParameters PropertyGroup
+        """
+        items = [('automatic', 'Automatic', ''), ('X', 'X manual', ''), ('Y', 'Y manual', ''), ('Z', 'Z manual', ''),
+                ('-X', '-X manual', ''), ('-Y', '-Y manual', ''), ('-Z', '-Z manual', '')]
+        params.primary_rotation_axis = bpy.props.EnumProperty(items=items, name="Primary Rotation Axis", default='automatic')
 
-
-def parameters_ui(layout, params):
-    """ Create the ui for the rig parameters.
-    """
-    r = layout.row()
-    r.label(text="Bend rotation axis:")
-    r.prop(params, "primary_rotation_axis", text="")
+    @classmethod
+    def parameters_ui(self, layout, params):
+        """ Create the ui for the rig parameters.
+        """
+        r = layout.row()
+        r.label(text="Bend rotation axis:")
+        r.prop(params, "primary_rotation_axis", text="")
 
 
 def create_sample(obj):
