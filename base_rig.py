@@ -24,13 +24,16 @@ import traceback
 
 from .utils.bones import BoneDict, BoneUtilityMixin
 from .utils.mechanism import MechanismUtilityMixin
+from .utils.metaclass import BaseStagedClass
 
+# Only export certain symbols via 'from base_rig import *'
+__all__ = ['BaseRig', 'RigUtility']
 
 #=============================================
 # Base Rig
 #=============================================
 
-class GenerateCallbackMixin(object):
+class GenerateCallbackMixin(BaseStagedClass):
     """
     Standard set of callback methods to redefine.
     Shared between BaseRig and GeneratorPlugin.
@@ -41,7 +44,23 @@ class GenerateCallbackMixin(object):
     Switching modes is not allowed in rigs for performance
     reasons. Place code in the appropriate callbacks to use
     the mode set by the main engine.
+
+    Before each callback, all other methods decorated with
+    @stage_<method_name> are called, for instance:
+
+    @stage_generate_bones
+    def foo(self):
+        print('first')
+
+    def generate_bones(self):
+        print('second')
+
+    Will print 'first', then 'second'. However, the order
+    in which different @stage_generate_bones methods in the
+    same rig will be called is not specified.
     """
+    DEFINE_STAGES = True
+
     def initialize(self):
         """
         Initialize processing after all rig classes are constructed.
@@ -201,3 +220,11 @@ class RigUtility(BoneUtilityMixin, MechanismUtilityMixin):
         self.owner.register_new_bone(new_name, old_name)
 
 
+#=============================================
+# Rig Stage Decorators
+#=============================================
+
+# Generate and export @stage_... decorators for all valid stages
+for name, decorator in GenerateCallbackMixin.make_stage_decorators():
+    globals()[name] = decorator
+    __all__.append(name)

@@ -28,6 +28,8 @@ from ...utils.naming import strip_org, make_deformer_name
 from ...utils.widgets_basic import create_bone_widget
 from ...utils.misc import map_list, map_apply
 
+from ...base_rig import *
+
 
 class Rig(SimpleChainRig):
     """ A "copy_chain" rig.  All it does is duplicate the original bone chain
@@ -43,41 +45,45 @@ class Rig(SimpleChainRig):
         self.make_deforms = self.params.make_deforms
 
 
-    def generate_bones(self):
-        # Create the deformation and control bone chains.
+    @stage_generate_bones
+    def make_control_chain(self):
         if self.make_controls:
-            self.make_control_chain()
+            super(Rig,self).make_control_chain()
 
+    @stage_generate_bones
+    def make_deform_chain(self):
         if self.make_deforms:
-            self.make_deform_chain()
+            super(Rig,self).make_deform_chain()
 
-
-    def parent_bones(self):
+    @stage_parent_bones
+    def parent_control_chain(self):
         if self.make_controls:
-            self.parent_control_chain()
+            super(Rig,self).parent_control_chain()
 
+    @stage_parent_bones
+    def parent_deform_chain(self):
         if self.make_deforms:
-            self.parent_deform_chain()
+            super(Rig,self).parent_deform_chain()
 
-
-    def configure_bones(self):
+    @stage_configure_bones
+    def configure_control_chain(self):
         if self.make_controls:
-            self.configure_control_chain()
+            super(Rig,self).configure_control_chain()
 
-
-    def rig_bones(self):
-        # Create the deformation and control bone chain constraints.
+    @stage_rig_bones
+    def rig_org_chain(self):
         if self.make_controls:
-            self.rig_org_chain()
+            super(Rig,self).rig_org_chain()
 
+    @stage_rig_bones
+    def rig_deform_chain(self):
         if self.make_deforms:
-            self.rig_deform_chain()
+            super(Rig,self).rig_deform_chain()
 
-
-    def generate_widgets(self):
-        # Create control widgets
+    @stage_generate_widgets
+    def make_control_widgets(self):
         if self.make_controls:
-            self.make_control_widgets()
+            super(Rig,self).make_control_widgets()
 
 
     @classmethod

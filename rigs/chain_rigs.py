@@ -21,7 +21,7 @@
 import bpy
 from itertools import count, repeat
 
-from ..base_rig import BaseRig
+from ..base_rig import *
 
 from ..utils.errors import MetarigError
 from ..utils.rig import connected_children_names
@@ -43,16 +43,14 @@ class SimpleChainRig(BaseRig):
     bbone_segments = None
 
     # Generate
-    def generate_bones(self):
-        self.make_control_chain()
-        self.make_deform_chain()
-
+    @stage_generate_bones
     def make_control_chain(self):
         self.bones.ctrl.main = map_list(self.make_control_bone, self.bones.org)
 
     def make_control_bone(self, org):
         return self.copy_bone(org, strip_org(org), parent=True)
 
+    @stage_generate_bones
     def make_deform_chain(self):
         self.bones.deform = map_list(self.make_deform_bone, self.bones.org)
 
@@ -63,20 +61,16 @@ class SimpleChainRig(BaseRig):
         return name
 
     # Parent
-    def parent_bones(self):
-        self.parent_control_chain()
-        self.parent_deform_chain()
-
+    @stage_parent_bones
     def parent_control_chain(self):
         self.parent_bone_chain(self.bones.ctrl.main, use_connect=True)
 
+    @stage_parent_bones
     def parent_deform_chain(self):
         self.parent_bone_chain(self.bones.deform, use_connect=True)
 
     # Configure
-    def configure_bones(self):
-        self.configure_control_chain()
-
+    @stage_configure_bones
     def configure_control_chain(self):
         map_apply(self.configure_control_bone, self.bones.org, self.bones.ctrl.main)
 
@@ -84,16 +78,14 @@ class SimpleChainRig(BaseRig):
         self.copy_bone_properties(org, ctrl)
 
     # Rig
-    def rig_bones(self):
-        self.rig_org_chain()
-        self.rig_deform_chain()
-
+    @stage_rig_bones
     def rig_org_chain(self):
         map_apply(self.rig_org_bone, self.bones.org, self.bones.ctrl.main)
 
     def rig_org_bone(self, org, ctrl):
         self.make_constraint(org, 'COPY_TRANSFORMS', ctrl)
 
+    @stage_rig_bones
     def rig_deform_chain(self):
         map_apply(self.rig_deform_bone, self.bones.org, self.bones.deform)
 
@@ -101,9 +93,7 @@ class SimpleChainRig(BaseRig):
         self.make_constraint(deform, 'COPY_TRANSFORMS', org)
 
     # Widgets
-    def generate_widgets(self):
-        self.make_control_widgets()
-
+    @stage_generate_widgets
     def make_control_widgets(self):
         map_apply(self.make_control_widget, self.bones.ctrl.main)
 
@@ -115,11 +105,7 @@ class TweakChainRig(SimpleChainRig):
     """A rig that adds tweak controls to the triple chain."""
 
     # Generate
-    def generate_bones(self):
-        self.make_control_chain()
-        self.make_tweak_chain()
-        self.make_deform_chain()
-
+    @stage_generate_bones
     def make_tweak_chain(self):
         orgs = self.bones.org
         self.bones.ctrl.tweak = map_list(self.make_tweak_bone, count(0), orgs + orgs[-1:])
@@ -135,20 +121,13 @@ class TweakChainRig(SimpleChainRig):
         return name
 
     # Parent
-    def parent_bones(self):
-        self.parent_control_chain()
-        self.parent_tweak_chain()
-        self.parent_deform_chain()
-
+    @stage_parent_bones
     def parent_tweak_chain(self):
         ctrl = self.bones.ctrl
         map_apply(self.set_bone_parent, ctrl.tweak, ctrl.main + ctrl.main[-1:])
 
     # Configure
-    def configure_bones(self):
-        self.configure_control_chain()
-        self.configure_tweak_chain()
-
+    @stage_configure_bones
     def configure_tweak_chain(self):
         map_apply(self.configure_tweak_bone, count(0), self.bones.ctrl.tweak)
 
@@ -165,10 +144,7 @@ class TweakChainRig(SimpleChainRig):
             tweak_pb.lock_scale = (False, True, False)
 
     # Rig
-    def rig_bones(self):
-        self.rig_org_chain()
-        self.rig_deform_chain()
-
+    @stage_rig_bones
     def rig_org_chain(self):
         tweaks = self.bones.ctrl.tweak
         map_apply(self.rig_org_bone, self.bones.org, tweaks, tweaks[1:])
@@ -179,10 +155,7 @@ class TweakChainRig(SimpleChainRig):
         self.make_constraint(org, 'STRETCH_TO', next_tweak)
 
     # Widgets
-    def generate_widgets(self):
-        self.make_control_widgets()
-        self.make_tweak_widgets()
-
+    @stage_generate_widgets
     def make_tweak_widgets(self):
         map_apply(self.make_tweak_widget, self.bones.ctrl.tweak)
 

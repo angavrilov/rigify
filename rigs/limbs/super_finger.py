@@ -11,6 +11,7 @@ from ...utils.widgets import create_widget
 from ...utils.widgets_basic import create_circle_widget
 from ...utils.misc import map_list, map_apply
 
+from ...base_rig import *
 from ..chain_rigs import SimpleChainRig
 
 
@@ -29,14 +30,8 @@ class Rig(SimpleChainRig):
     ###############
     # GENERATE
 
-    def generate_bones(self):
-        self.make_master_control_bone()
-        self.make_control_chain()
-        self.make_mch_bend_chain()
-        self.make_mch_stretch_chain()
-        self.make_deform_chain()
-
     # Master control:
+    @stage_generate_bones
     def make_master_control_bone(self):
         orgs = self.bones.org
         name = self.copy_bone(orgs[0], self.master_control_name(orgs[0]), parent=True)
@@ -54,6 +49,7 @@ class Rig(SimpleChainRig):
         return name_base + 'master' + name_suffix
 
     # Detail control:
+    @stage_generate_bones
     def make_control_chain(self):
         orgs = self.bones.org
         self.bones.ctrl.main = map_list(self.make_control_bone, orgs)
@@ -69,13 +65,16 @@ class Rig(SimpleChainRig):
         self.get_bone(name).length /= 2
 
         return name
+
     # MCH:
+    @stage_generate_bones
     def make_mch_bend_chain(self):
         self.bones.mch.bend = map_list(self.make_mch_bend_bone, self.bones.org)
 
     def make_mch_bend_bone(self, org):
         return self.copy_bone(org, make_mechanism_name(strip_org(org)) + "_drv", parent=False)
 
+    @stage_generate_bones
     def make_mch_stretch_chain(self):
         self.bones.mch.stretch = map_list(self.make_mch_stretch_bone, self.bones.org)
 
@@ -85,20 +84,17 @@ class Rig(SimpleChainRig):
     ###############
     # PARENT
 
-    def parent_bones(self):
-        self.parent_control_chain()
-        self.parent_mch_bend_chain()
-        self.parent_mch_stretch_chain()
-        self.parent_deform_chain()
-
+    @stage_parent_bones
     def parent_control_chain(self):
         ctrls = self.bones.ctrl.main
         map_apply(self.set_bone_parent, ctrls, self.bones.mch.bend + ctrls[-2:])
 
+    @stage_parent_bones
     def parent_mch_bend_chain(self):
         ctrls = self.bones.ctrl.main
         map_apply(self.set_bone_parent, self.bones.mch.bend, [self.first_parent] + ctrls)
 
+    @stage_parent_bones
     def parent_mch_stretch_chain(self):
         ctrls = self.bones.ctrl.main
         map_apply(self.set_bone_parent, self.bones.mch.stretch, [self.first_parent] + ctrls[1:])
@@ -106,10 +102,7 @@ class Rig(SimpleChainRig):
     ###############
     # CONFIGURE
 
-    def configure_bones(self):
-        self.configure_master_control_bone()
-        self.configure_control_chain()
-
+    @stage_configure_bones
     def configure_master_control_bone(self):
         master = self.bones.ctrl.master
 
@@ -122,6 +115,7 @@ class Rig(SimpleChainRig):
         self.script.add_panel_selected_check(self.bones.ctrl.flatten())
         self.script.add_panel_custom_prop(master, 'finger_curve', text="Curvature", slider=True)
 
+    @stage_configure_bones
     def configure_control_chain(self):
         map_apply(self.configure_control_bone, self.bones.org + [None], self.bones.ctrl.main)
 
@@ -136,12 +130,6 @@ class Rig(SimpleChainRig):
 
     ###############
     # RIG
-
-    def rig_bones(self):
-        self.rig_mch_bend_chain()
-        self.rig_mch_stretch_chain()
-        self.rig_org_chain()
-        self.rig_deform_chain()
 
     # Match axis to expression
     axis_options = {
@@ -162,6 +150,7 @@ class Rig(SimpleChainRig):
     }
 
     # MCH:
+    @stage_rig_bones
     def rig_mch_bend_chain(self):
         map_apply(self.rig_mch_bend_bone, count(0), self.bones.mch.bend)
 
@@ -183,6 +172,7 @@ class Rig(SimpleChainRig):
                 variables={'sy': (master, '.scale.y')}
             )
 
+    @stage_rig_bones
     def rig_mch_stretch_chain(self):
         ctrls = self.bones.ctrl.main
         map_apply(self.rig_mch_stretch_bone, count(0), self.bones.mch.stretch, ctrls, ctrls[1:])
@@ -196,6 +186,7 @@ class Rig(SimpleChainRig):
         self.make_constraint(mch, 'STRETCH_TO', ctrl_next, volume='NO_VOLUME')
 
     # ORG:
+    @stage_rig_bones
     def rig_org_chain(self):
         map_apply(self.rig_org_bone, self.bones.org, self.bones.mch.stretch)
 
@@ -212,10 +203,7 @@ class Rig(SimpleChainRig):
     ###############
     # WIDGETS
 
-    def generate_widgets(self):
-        self.make_master_control_widget()
-        self.make_control_widgets()
-
+    @stage_generate_widgets
     def make_master_control_widget(self):
         master_name = self.bones.ctrl.master
 

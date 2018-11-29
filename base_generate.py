@@ -171,7 +171,7 @@ class BaseGenerator(object):
         self.stage = method_name
 
         for rig in [*self.rig_list, *self.plugin_list]:
-            getattr(rig, method_name)()
+            rig.rigify_invoke_stage(method_name)
 
             assert(self.context.active_object == self.obj)
             assert(self.obj.mode == 'OBJECT')
@@ -186,7 +186,7 @@ class BaseGenerator(object):
         self.stage = method_name
 
         for rig in [*self.rig_list, *self.plugin_list]:
-            getattr(rig, method_name)()
+            rig.rigify_invoke_stage(method_name)
 
             assert(self.context.active_object == self.obj)
             assert(self.obj.mode == 'EDIT')
@@ -221,7 +221,7 @@ class BaseGenerator(object):
         self.stage = 'generate_bones'
 
         for rig in self.rig_list:
-            rig.generate_bones()
+            rig.rigify_invoke_stage('generate_bones')
 
             assert(self.context.active_object == self.obj)
             assert(self.obj.mode == 'EDIT')
@@ -229,7 +229,7 @@ class BaseGenerator(object):
             self.__auto_register_bones(self.obj.data.edit_bones, rig)
 
         for plugin in self.plugin_list:
-            plugin.generate_bones()
+            plugin.rigify_invoke_stage('generate_bones')
 
             assert(self.context.active_object == self.obj)
             assert(self.obj.mode == 'EDIT')
