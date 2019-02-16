@@ -52,7 +52,7 @@ class DATA_OT_rigify_add_feature_set(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
     def execute(self, context):
-        addon_prefs = context.user_preferences.addons[__package__].preferences
+        addon_prefs = context.preferences.addons[__package__].preferences
 
         rigify_config_path = os.path.join(bpy.utils.script_path_user(), 'rigify')
         os.makedirs(rigify_config_path, exist_ok=True)
@@ -81,7 +81,7 @@ class DATA_OT_rigify_remove_feature_set(bpy.types.Operator):
         return context.window_manager.invoke_confirm(self, event)
 
     def execute(self, context):
-        addon_prefs = context.user_preferences.addons[__package__].preferences
+        addon_prefs = context.preferences.addons[__package__].preferences
 
         rigify_config_path = os.path.join(bpy.utils.script_path_user(), 'rigify')
         if os.path.exists(os.path.join(rigify_config_path, self.featureset)):
