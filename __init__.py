@@ -20,7 +20,7 @@
 
 bl_info = {
     "name": "Rigify",
-    "version": (0, 5),
+    "version": (0, 5, 1),
     "author": "Nathan Vegdahl, Lucio Rossi, Ivan Cappiello",
     "blender": (2, 78, 0),
     "description": "Automatic rigging from building-block components",
@@ -363,7 +363,7 @@ def register():
     bpy.types.Armature.active_feature_set = bpy.props.EnumProperty(
         items=feature_sets.feature_set_items,
         name="Feature Set",
-        description="Feature set to select from for this bone"
+        description="Restrict the rig list to a specific custom feature set"
         )
 
     bpy.types.PoseBone.rigify_type = bpy.props.StringProperty(name="Rigify Type", description="Rig type for this bone")

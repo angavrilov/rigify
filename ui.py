@@ -177,11 +177,15 @@ class DATA_PT_rigify_buttons(bpy.types.Panel):
             # Build types list
             build_type_list(context, id_store.rigify_types)
 
+            if id_store.rigify_active_type > len(id_store.rigify_types):
+                id_store.rigify_active_type = 0
+
             # Rig type list
             if len(feature_sets.feature_set_items(context.scene, context)) > 2:
                 row = layout.row()
                 row.prop(context.object.data, "active_feature_set")
             row = layout.row()
+            row.template_list("UI_UL_list", "rigify_types", id_store, "rigify_types", id_store, 'rigify_active_type')
 
             props = layout.operator("armature.metarig_sample_add", text="Add sample")
             props.metarig_type = id_store.rigify_types[id_store.rigify_active_type].name
