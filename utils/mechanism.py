@@ -78,7 +78,7 @@ def make_constraint(
 # Custom property creation utilities
 #=============================================
 
-def make_property(owner, name, default=0.0, min=0.0, max=1.0, soft_min=None, soft_max=None):
+def make_property(owner, name, default=0.0, min=0.0, max=1.0, soft_min=None, soft_max=None, description=None):
     """
     Creates and initializes a custom property of owner.
 
@@ -91,6 +91,8 @@ def make_property(owner, name, default=0.0, min=0.0, max=1.0, soft_min=None, sof
     prop["soft_min"] = soft_min if soft_min is not None else min
     prop["max"] = max
     prop["soft_max"] = soft_max if soft_max is not None else max
+    if description:
+        prop["description"] = description
 
     return prop
 
@@ -102,7 +104,7 @@ def _init_driver_target(drv_target, var_info, target_id):
     """Initialize a driver variable target from a specification."""
 
     # Parse the simple list format for the common case.
-    if isinstance(var_info, list):
+    if isinstance(var_info, tuple):
         # [ (target_id,) subtarget, ...path ]
 
         # If target_id is supplied as parameter, allow omitting it
@@ -144,7 +146,7 @@ def _add_driver_variable(drv, var_name, var_info, target_id):
     var.name = var_name
 
     # Parse the simple list format for the common case.
-    if isinstance(var_info, list):
+    if isinstance(var_info, tuple):
         # [ (target_id,) subtarget, ...path ]
         var.type = "SINGLE_PROP"
 
@@ -182,13 +184,13 @@ def make_driver(owner, prop, index=-1, type='SUM', expression=None, variables={}
 
         Variable specifications are constructed as nested dictionaries and lists that
         follow the property structure of the original Blender objects, but the most
-        common case can be abbreviated as a simple list.
+        common case can be abbreviated as a simple tuple.
 
         The following specifications are equivalent:
 
-          [ target, subtarget, '.foo', 'bar' ]
+          ( target, subtarget, '.foo', 'bar' )
 
-          { 'type': 'SINGLE_PROP', 'targets':[[ target, subtarget, '.foo', 'bar' ]] }
+          { 'type': 'SINGLE_PROP', 'targets':[( target, subtarget, '.foo', 'bar' )] }
 
           { 'type': 'SINGLE_PROP',
             'targets':[{ 'id': target, 'data_path': subtarget.path_from_id() + '.foo["bar"]' }] }
@@ -197,13 +199,13 @@ def make_driver(owner, prop, index=-1, type='SUM', expression=None, variables={}
 
         It is possible to specify path directly as a simple string without following items:
 
-          [ target, 'path' ]
+          ( target, 'path' )
 
           { 'type': 'SINGLE_PROP', 'targets':[{ 'id': target, 'data_path': 'path' }] }
 
         If the target_id parameter is not None, it is possible to omit target:
 
-          [ subtarget, '.foo', 'bar' ]
+          ( subtarget, '.foo', 'bar' )
 
           { 'type': 'SINGLE_PROP',
             'targets':[{ 'id': target_id, 'data_path': subtarget.path_from_id() + '.foo["bar"]' }] }
@@ -241,7 +243,7 @@ def make_driver(owner, prop, index=-1, type='SUM', expression=None, variables={}
 # Utility mixin
 #=============================================
 
-class MechanismUtilityMixin:
+class MechanismUtilityMixin(object):
     """
     Provides methods for more convenient creation of constraints, properties
     and drivers within an armature (by implicitly providing context).
